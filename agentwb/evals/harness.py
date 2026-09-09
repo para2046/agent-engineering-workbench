@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..aci.observations import RawStore
+from ..analysis import failure_analyzer
 from ..experience.store import ExperienceStore
 from ..providers.base import ModelProvider
 from ..runtime.agent import AgentRunner
@@ -60,12 +61,16 @@ class Harness:
         experience: ExperienceStore,
         workspaces_root: Path,
         keep_workspaces: bool = True,
+        judge=None,
+        analyze_failures: bool = True,
     ):
         self.store = store
         self.experience = experience
         self.workspaces_root = Path(workspaces_root)
         self.workspaces_root.mkdir(parents=True, exist_ok=True)
         self.keep_workspaces = keep_workspaces
+        self.judge = judge
+        self.analyze_failures = analyze_failures
 
     # -- environment ------------------------------------------------------
     def build_workspace(self, task: Task, run_id: str) -> Path:
@@ -111,13 +116,22 @@ class Harness:
         traj.environment_outcome = self._snapshot(ws)
         traj.evaluation = self.grade(task, traj, ws)
         traj.failure_categories = classify(task, traj)
+
+        # Analyse failures while the evidence is fresh. The analysis is a
+        # hypothesis and is stored beside the run, never folded into the verdict.
+        if self.analyze_failures and not (traj.evaluation and traj.evaluation.passed):
+            analysis = failure_analyzer.analyze(task, traj, judge=self.judge)
+            failure_analyzer.save(analysis, self.store.run_dir(traj.trajectory_id))
+            traj.metrics["analysis_source"] = analysis.source
+
         recorder.close(traj)
         self.experience.record(task, traj)
         return TrialResult(trajectory=traj, workspace=ws)
 
     # -- grading ----------------------------------------------------------
     def grade(self, task: Task, traj: Trajectory, workspace: Path) -> Evaluation:
-        ctx = GradingContext(task=task, trajectory=traj, workspace=Path(workspace))
+        ctx = GradingContext(task=task, trajectory=traj, workspace=Path(workspace),
+                             judge=self.judge)
         results = [run_grader(spec, ctx) for spec in task.graders]
 
         required = [r for r in results if r.required]

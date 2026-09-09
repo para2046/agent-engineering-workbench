@@ -20,8 +20,10 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+from ..analysis import failure_analyzer
 from ..config import Settings
 from ..evals.harness import Harness, load_tasks
+from ..judge.client import JudgeClient
 from ..experience.store import ExperienceStore
 from ..experiments.comparison import compare, summarize_task_results
 from ..providers.base import ProviderError, available_providers, build_provider
@@ -52,10 +54,25 @@ class Ctx:
         self.settings = Settings.load(Path(args.data_dir) if args.data_dir else None)
         self.store = TrajectoryStore(self.settings.data_dir)
         self.experience = ExperienceStore(self.settings.data_dir / "experience")
+        self.judge = self._build_judge(args)
         self.harness = Harness(
-            self.store, self.experience, self.settings.data_dir / "workspaces"
+            self.store, self.experience, self.settings.data_dir / "workspaces",
+            judge=self.judge,
+            analyze_failures=not getattr(args, "no_analysis", False),
         )
         self.json = getattr(args, "json", False)
+
+    def _build_judge(self, args: argparse.Namespace):
+        """A judge is optional. Without one, model graders return UNKNOWN --
+        which is the honest outcome, not a silently skipped check."""
+        key = getattr(args, "judge_provider", None) or self.settings.judge_provider
+        if not key:
+            return None
+        kwargs: dict[str, Any] = {}
+        model = getattr(args, "judge_model", None) or self.settings.judge_model
+        if model:
+            kwargs["model"] = model
+        return JudgeClient(build_provider(key, **kwargs))
 
     def provider(self, args: argparse.Namespace):
         key = args.provider or self.settings.provider
@@ -263,6 +280,88 @@ def cmd_annotate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """Analyse why a run failed. Re-runs analysis unless --cached is given."""
+    ctx = Ctx(args)
+    if args.all_failures:
+        rows = ctx.experience.failures(limit=args.last)
+        run_ids = [r["trajectory_id"] for r in rows]
+    else:
+        if not args.run_id:
+            print("give a run id, or --all-failures", file=sys.stderr)
+            return 2
+        run_ids = [ctx.store.resolve(args.run_id)]
+
+    if not run_ids:
+        print("no failed runs to analyse")
+        return 0
+
+    tasks = {t.id: t for t in load_tasks(Path(args.tasks))}
+    out = []
+    for run_id in run_ids:
+        traj = ctx.store.load(run_id)
+        task = tasks.get(traj.task_id)
+        if task is None:
+            print(f"skipping {run_id}: no task definition for {traj.task_id!r} "
+                  f"in {args.tasks}", file=sys.stderr)
+            continue
+        analysis = None
+        if args.cached:
+            analysis = failure_analyzer.load(ctx.store.run_dir(run_id))
+        if analysis is None:
+            analysis = failure_analyzer.analyze(task, traj, judge=ctx.judge)
+            failure_analyzer.save(analysis, ctx.store.run_dir(run_id))
+        out.append(analysis)
+        if not ctx.json:
+            _print_analysis(analysis)
+
+    if ctx.json:
+        print(json.dumps([a.to_dict() for a in out], indent=2, default=str))
+    return 0
+
+
+def _print_analysis(a) -> None:
+    src = _c(DIM, f"[{a.source}]") if a.source == "rules" else _c(BOLD, f"[{a.source}]")
+    print(f"\n{_c(BOLD, a.trajectory_id)}  task={a.task_id}  {src}  "
+          f"confidence={a.confidence}")
+    if a.source == "rules":
+        print(_c(DIM, "  (deterministic signals only -- no judge model configured)"))
+    if a.error:
+        print(f"  {_c(YELLOW, 'note')}: {a.error}")
+    print(f"  {_c(BOLD, 'root causes:')}")
+    for cause in a.root_causes:
+        print(f"    - {cause}")
+    if a.critical_step is not None:
+        print(f"  critical step: {a.critical_step}")
+    print(f"  avoidable: {a.avoidable}   optimizer candidate: {a.optimizer_candidate}")
+    if a.categories:
+        print(f"  categories: {_c(YELLOW, ', '.join(a.categories))}")
+    if a.proposed_fix:
+        print(f"  {_c(BOLD, 'proposed fix:')} {a.proposed_fix}")
+    if a.recommended_regression_test:
+        print(f"  {_c(BOLD, 'regression test:')} {a.recommended_regression_test}")
+    print(_c(DIM, "  this is a hypothesis, not a verdict -- verify before acting on it"))
+
+
+def cmd_prompts(args: argparse.Namespace) -> int:
+    """List registered prompt versions (spec section 12)."""
+    from .. import prompts as prompt_registry
+    from ..analysis import failure_analyzer as _fa  # noqa: F401 -- registers its prompt
+    from ..evals.graders import llm_judge as _lj  # noqa: F401 -- registers judge prompts
+
+    ids = prompt_registry.registered()
+    if getattr(args, "json", False):
+        print(json.dumps({pid: prompt_registry.get(pid).text for pid in ids}, indent=2))
+        return 0
+    for pid in ids:
+        vp = prompt_registry.get(pid)
+        first = vp.text.strip().splitlines()[0][:90]
+        parent = f"  (from {vp.parent})" if vp.parent else ""
+        print(f"  {_c(BOLD, pid)}{parent}")
+        print(f"      {_c(DIM, first)}")
+    return 0
+
+
 def cmd_tasks(args: argparse.Namespace) -> int:
     ctx = Ctx(args)
     tasks = load_tasks(Path(args.tasks))
@@ -326,11 +425,19 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--provider", help="mock | claude | openai (default from config)")
         sp.add_argument("--model", help="model id override")
 
+    def add_judge_flags(sp):
+        sp.add_argument("--judge-provider",
+                        help="provider for model graders and failure analysis; "
+                             "omit and they return UNKNOWN")
+        sp.add_argument("--judge-model", help="judge model id override")
+
     sp = sub.add_parser("run", help="run a task (or a directory of tasks)")
     sp.add_argument("task")
     sp.add_argument("--trials", type=int, help="override trial count")
     sp.add_argument("--timeout", type=int, default=60, help="per-tool timeout in seconds")
+    sp.add_argument("--no-analysis", action="store_true", help="skip failure analysis")
     add_provider_flags(sp)
+    add_judge_flags(sp)
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("eval", help="run a suite, or re-grade an existing run")
@@ -339,7 +446,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tasks", help="task directory (needed for --regrade)")
     sp.add_argument("--trials", type=int)
     sp.add_argument("--timeout", type=int, default=60)
+    sp.add_argument("--no-analysis", action="store_true")
     add_provider_flags(sp)
+    add_judge_flags(sp)
     sp.set_defaults(func=cmd_eval)
 
     sp = sub.add_parser("inspect", help="show a trajectory step by step")
@@ -361,7 +470,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("regress", help="run every task tagged 'regression'")
     sp.add_argument("--tasks", default="tasks")
     sp.add_argument("--trials", type=int)
+    sp.add_argument("--no-analysis", action="store_true")
     add_provider_flags(sp)
+    add_judge_flags(sp)
     sp.set_defaults(func=cmd_regress)
 
     sp = sub.add_parser("annotate", help="attach a human correction to a run")
@@ -371,6 +482,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--note", default="")
     sp.add_argument("--author", default="human")
     sp.set_defaults(func=cmd_annotate)
+
+    sp = sub.add_parser("analyze",
+                        help="analyse why a run failed (hypothesis, not verdict)")
+    sp.add_argument("run_id", nargs="?")
+    sp.add_argument("--all-failures", action="store_true",
+                    help="analyse every recorded failure")
+    sp.add_argument("--last", type=int, default=10, help="with --all-failures, how many")
+    sp.add_argument("--tasks", default="tasks", help="task directory")
+    sp.add_argument("--cached", action="store_true", help="reuse a stored analysis if present")
+    add_judge_flags(sp)
+    sp.set_defaults(func=cmd_analyze)
+
+    sp = sub.add_parser("prompts", help="list registered prompt versions")
+    sp.set_defaults(func=cmd_prompts)
 
     sp = sub.add_parser("tasks", help="list task definitions")
     sp.add_argument("--tasks", default="tasks")

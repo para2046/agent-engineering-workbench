@@ -1,0 +1,90 @@
+{
+  "id": "diagnose_latency_regression",
+  "tags": [
+    "research",
+    "capability",
+    "judge"
+  ],
+  "prompt": "Read incident_notes.md and metrics.csv in this workspace and write your analysis to findings.md.\n\nYour findings must state: (1) the most likely cause, (2) the specific evidence supporting it, and (3) anything you could NOT determine from the material provided. Do not speculate beyond what the data shows.",
+  "success_criteria": "findings.md identifies the per-line-item currency-conversion lookup in deploy c4f1a9 exhausting the connection pool as the likely cause, cites the pool saturation (100/100) and the recovery after rollback, and is explicit that the material does not show why the lookup is slow.",
+  "environment": {
+    "files": {
+      "incident_notes.md": "# Incident notes: checkout latency regression\n\n2026-03-02 14:10  p99 checkout latency rose from 180ms to 1400ms.\n2026-03-02 14:12  Error rate unchanged. No 5xx increase.\n2026-03-02 14:15  Deploy c4f1a9 went out at 14:08 (payment-service).\n2026-03-02 14:20  c4f1a9 diff: added a currency-conversion lookup per line item.\n2026-03-02 14:31  DB CPU flat. Connection pool saturated at 100/100.\n2026-03-02 14:40  Rollback of c4f1a9 started.\n2026-03-02 14:47  p99 back to 190ms. Pool at 12/100.\n",
+      "metrics.csv": "timestamp,p99_ms,pool_in_use,db_cpu_pct\n14:00,178,11,42\n14:05,181,12,43\n14:10,1402,100,44\n14:20,1388,100,43\n14:45,201,14,42\n14:50,186,12,41\n"
+    }
+  },
+  "max_steps": 12,
+  "trials": 1,
+  "graders": [
+    {
+      "type": "file_exists",
+      "name": "wrote_findings",
+      "required": true,
+      "params": {
+        "path": "findings.md"
+      }
+    },
+    {
+      "type": "file_contains",
+      "name": "names_the_deploy",
+      "required": true,
+      "params": {
+        "path": "findings.md",
+        "pattern": "c4f1a9"
+      }
+    },
+    {
+      "type": "no_forbidden_changes",
+      "name": "left_evidence_alone",
+      "required": true,
+      "params": {
+        "paths": [
+          "incident_notes.md",
+          "metrics.csv"
+        ]
+      }
+    },
+    {
+      "type": "llm_judge",
+      "name": "groundedness",
+      "required": true,
+      "weight": 2.0,
+      "params": {
+        "dimension": "groundedness",
+        "include": "both",
+        "threshold": 0.7
+      }
+    },
+    {
+      "type": "llm_judge",
+      "name": "coverage",
+      "required": true,
+      "params": {
+        "dimension": "coverage",
+        "include": "output",
+        "threshold": 0.7
+      }
+    },
+    {
+      "type": "llm_judge",
+      "name": "correctness",
+      "required": true,
+      "weight": 2.0,
+      "params": {
+        "dimension": "correctness",
+        "include": "output",
+        "threshold": 0.7
+      }
+    },
+    {
+      "type": "llm_judge",
+      "name": "clarity",
+      "required": false,
+      "params": {
+        "dimension": "clarity",
+        "include": "output",
+        "threshold": 0.6
+      }
+    }
+  ]
+}

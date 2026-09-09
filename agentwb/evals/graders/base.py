@@ -24,11 +24,17 @@ from ...types import GraderResult, GraderSpec, GraderVerdict, Task, Trajectory
 
 @dataclass
 class GradingContext:
-    """Everything a grader is allowed to look at."""
+    """Everything a grader is allowed to look at.
+
+    ``judge`` is present only when a judge model is configured. Deterministic
+    graders ignore it entirely; model graders return UNKNOWN without it rather
+    than silently skipping themselves.
+    """
 
     task: Task
     trajectory: Trajectory
     workspace: Path
+    judge: Optional[Any] = None
 
 
 GraderFn = Callable[[GradingContext, dict[str, Any]], GraderResult]
