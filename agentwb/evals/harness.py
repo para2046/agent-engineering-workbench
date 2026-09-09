@@ -64,6 +64,7 @@ class Harness:
         judge=None,
         analyze_failures: bool = True,
         retriever=None,
+        prices=None,
     ):
         self.store = store
         self.experience = experience
@@ -73,6 +74,7 @@ class Harness:
         self.judge = judge
         self.analyze_failures = analyze_failures
         self.retriever = retriever
+        self.prices = prices
 
     # -- environment ------------------------------------------------------
     def build_workspace(self, task: Task, run_id: str) -> Path:
@@ -113,7 +115,7 @@ class Harness:
         raw = RawStore(self.store.run_dir(run_id) / "raw")
         recorder = TrajectoryRecorder(self.store)
         runner = AgentRunner(provider, ws, recorder, raw, tool_timeout=tool_timeout,
-                             retriever=self.retriever)
+                             retriever=self.retriever, prices=self.prices)
 
         traj = runner.run(task, trial=trial, run_id=run_id)
         traj.environment_outcome = self._snapshot(ws)

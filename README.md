@@ -9,7 +9,7 @@ TASK → AGENT → ACTION → ENVIRONMENT → OBSERVATION → TRAJECTORY
      → OUTCOME → EVALUATION → FAILURE ANALYSIS → EXPERIENCE STORE ↺
 ```
 
-**Status: V1 — complete.** Single agent, trajectory logging, deterministic evaluation, model-based judging, failure analysis, experience storage *and retrieval*, Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
+**Status: V2 in progress.** V0 and V1 complete; Single agent, trajectory logging, deterministic evaluation, model-based judging, failure analysis, experience storage *and retrieval*, Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
 
 ---
 
@@ -41,7 +41,7 @@ agentwb run tasks/fix_divide_bug_unguided.json --provider claude --model claude-
 Run the tests:
 
 ```bash
-python -m unittest discover -s tests -t .    # 121 tests, no network
+python -m unittest discover -s tests -t .    # 158 tests, no network
 ```
 
 ---
@@ -79,7 +79,8 @@ primary evidence  >  environment outcome  >  tests  >  predefined metric  >  jud
 | `prompts` | Registered prompt versions and their lineage. |
 | `regress [--tasks dir]` | Run every task tagged `regression`. |
 | `annotate <run_id>` | Attach a human correction (verdict, reclassification, note). |
-| `tasks`, `reindex`, `providers` | List tasks, rebuild the index, list adapters. |
+| `splits` | Show train/dev/test/regression assignment. |
+| `tasks`, `prices`, `reindex`, `providers` | List tasks, model prices, rebuild the index, list adapters. |
 
 Run ids accept unambiguous prefixes (`run_20260909T1016`). Every command takes `--json` for machine-readable output — the CLI is meant to be driven by Claude Code as comfortably as by a human.
 
@@ -123,6 +124,11 @@ agentwb/
   judge/client.py       structured model calls; unparseable reply -> UNKNOWN, never a default
   analysis/
     failure_analyzer.py deterministic signals first, model interpretation on top
+
+  costs.py              cost estimation -- UNKNOWN until you configure prices, never zero
+  optimization/
+    datasets.py         train/dev/test/regression; the test set is not handed out casually
+    promotion.py        the gate an optimized policy must clear before replacing anything
 
   experience/
     store.py            (situation, action, observation, outcome, evaluation, correction)
@@ -239,6 +245,38 @@ Retrieval that leaves no trace is unfalsifiable — you cannot later ask whether
 
 Scoring is lexical (Jaccard over content terms), not embeddings. Crude, transparent, adequate at this volume — and unlike a vector store it can explain *why* a given experience was shown. Swap it when retrieval volume justifies the infrastructure, not before.
 
+### Splits and the promotion gate
+
+Built before any optimizer exists, deliberately. A gate added afterwards is a gate someone has already worked around; a gate that is the only path to promotion cannot be skipped by the thing it checks.
+
+```bash
+agentwb splits --tasks tasks     # train / dev / test / regression
+agentwb prices                   # configured model prices
+```
+
+**Splits.** Assignment is a hash of the task id — stable across machines and runs, because a split that reshuffles is not a held-out set, it is a slow leak. A `regression`/`holdout`/`test` tag pins a task explicitly. The mechanism that enforces *never optimize against the test set* is access, not intention:
+
+```python
+ds.for_optimizer("train")   # fine
+ds.for_optimizer("test")    # ContaminationError
+ds.for_final_evaluation()   # a different call you cannot type by accident
+```
+
+**The gate** runs candidate against baseline in order: dev improvement → held-out test → regression suite → cost ceiling → latency ceiling. Four things it refuses to do:
+
+- **Pass a candidate with any regression**, however good the average. A candidate that wins on average while breaking a previously-passing task traded a known-good behaviour for a mean, and averages are where regressions hide.
+- **Promote without held-out evidence.** A candidate tuned on dev has not been shown to generalise; missing test results block rather than default to pass.
+- **Treat unmeasured cost as free.** With a cost ceiling configured and cost UNKNOWN, the gate refuses — otherwise an unpriced model passes a spend limit *for being unpriced*.
+- **Report a bare yes/no.** Every check carries its reasons, because a promotion nobody can audit is one nobody can confidently undo.
+
+Small samples produce a loud warning rather than a silent pass: a two-point swing over eleven trials is noise wearing a result.
+
+**Cost** ships with no price table on purpose. Prices change, and a stale hard-coded number would produce confident wrong figures in every downstream report — the exact failure this codebase refuses everywhere else. Configure them and cost appears in `trajectory.metrics.estimated_cost_usd`; leave them and it is `None`, which propagates honestly rather than as zero.
+
+```json
+"model_prices": { "claude-sonnet-5": {"input_per_mtok": 3.00, "output_per_mtok": 15.00} }
+```
+
 ---
 
 ## Writing a task
@@ -305,7 +343,7 @@ Failure data is never deleted because a later version succeeded. The failures ar
 |---|---|---|
 | **V0** | single agent, trajectory logging, deterministic eval, LLM-judge graders, failure analysis, prompt versioning, experience store, CLI | **done** |
 | **V1** | **experience retrieval** — small diverse sets, provenance tracked, contamination refused; **OpenAI adapter** | **done** |
-| V2 | DSPy / GEPA optimization against explicit datasets, train/dev/test/regression splits, promotion gate | next |
+| V2 | **splits + promotion gate + cost metric done**; DSPy / GEPA optimizers still to come | in progress |
 | V3 | Claude + OpenAI structured multi-agent protocol, disagreement resolved by discriminative experiment | |
 | V4 | adversarial search for difficult failure cases | |
 
@@ -325,5 +363,6 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **The RuleProvider is a fixture, not a model.** It does no reasoning, and it cannot do the research task at all. Never quote its scores as agent performance.
 - **Judges are unvalidated against human labels.** They are graders, not truth. Use `annotate` to record human verdicts, and check whether the judge agrees before you trust a dimension. *Who validates the validators* is a real question and V0 does not answer it.
 - **Judge cost is unbounded per run.** Four judged dimensions means four model calls per trial, multiplied by `--trials`. Deterministic graders are free; put them first, which the bundled task does.
-- **No cost metric yet.** Tokens are tracked; spec section 27's `estimated cost` and the `utility = success - λ·cost` objective are not implemented, so optimization cannot yet trade quality against spend.
+- **No optimizer yet.** The splits, cost metric and promotion gate that optimization requires are built and tested; the DSPy and GEPA adapters that would generate candidate policies are not. The gate is usable today for hand-written candidates.
+- **No real statistical confidence.** The gate warns below a trial threshold using a crude binomial spread, not a confidence interval.
 - **Retrieval is off by default.** It only helps once the store has history from *other* tasks; on an empty store it correctly returns nothing.

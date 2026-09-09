@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..aci.observations import RawStore
+from ..costs import PriceBook
 from ..aci.registry import ToolRegistry
 from ..providers.base import ModelProvider, ProviderError, reset_provider
 from ..trajectories.recorder import TrajectoryRecorder
@@ -63,6 +64,7 @@ class AgentRunner:
         system_prompt: str = SYSTEM_PROMPT,
         prompt_version: str = SYSTEM_PROMPT_VERSION,
         retriever=None,
+        prices: PriceBook = None,
     ):
         self.provider = provider
         self.workspace = Path(workspace)
@@ -71,6 +73,7 @@ class AgentRunner:
         self.system_prompt = system_prompt
         self.prompt_version = prompt_version
         self.retriever = retriever
+        self.prices = prices
 
     def run(self, task: Task, trial: int = 0, run_id: Optional[str] = None) -> Trajectory:
         reset_provider(self.provider)
@@ -169,6 +172,11 @@ class AgentRunner:
 
         traj.ended_at = utcnow()
         traj.metrics = self._metrics(traj, total, monitor)
+        # None when no price is configured -- never silently zero.
+        traj.metrics["estimated_cost_usd"] = (
+            self.prices.estimate(traj.model, total.input_tokens, total.output_tokens)
+            if self.prices else None
+        )
         return traj
 
     # -- helpers ----------------------------------------------------------

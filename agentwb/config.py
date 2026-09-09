@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +23,9 @@ class Settings:
     tool_timeout: int = 60
     judge_provider: Optional[str] = None   # None = model graders return UNKNOWN
     judge_model: Optional[str] = None
+    # {"model": {"input_per_mtok": x, "output_per_mtok": y}} -- no defaults
+    # shipped, because a stale price is worse than an honest UNKNOWN.
+    model_prices: dict = field(default_factory=dict)
 
     @staticmethod
     def load(data_dir: Optional[Path] = None, start: Optional[Path] = None) -> "Settings":
@@ -36,6 +39,7 @@ class Settings:
             s.tool_timeout = int(raw.get("tool_timeout", s.tool_timeout))
             s.judge_provider = raw.get("judge_provider", s.judge_provider)
             s.judge_model = raw.get("judge_model", s.judge_model)
+            s.model_prices = dict(raw.get("model_prices") or s.model_prices)
             if not s.data_dir.is_absolute():
                 s.data_dir = cfg.parent / s.data_dir
 

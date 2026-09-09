@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 from ..analysis import failure_analyzer
 from ..config import Settings
+from ..costs import PriceBook
 from ..evals.harness import Harness, load_tasks
 from ..judge.client import JudgeClient
 from ..experience.retrieval import ExperienceRetriever
@@ -60,11 +61,13 @@ class Ctx:
         self.retriever = (
             ExperienceRetriever(self.experience, k=retrieve_k) if retrieve_k > 0 else None
         )
+        self.prices = PriceBook(self.settings.model_prices)
         self.harness = Harness(
             self.store, self.experience, self.settings.data_dir / "workspaces",
             judge=self.judge,
             analyze_failures=not getattr(args, "no_analysis", False),
             retriever=self.retriever,
+            prices=self.prices,
         )
         self.json = getattr(args, "json", False)
 
@@ -368,6 +371,43 @@ def cmd_prompts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_splits(args: argparse.Namespace) -> int:
+    """Show how tasks divide into train/dev/test/regression."""
+    from ..optimization.datasets import SPLITS, build_dataset
+
+    ctx = Ctx(args)
+    ds = build_dataset(load_tasks(Path(args.tasks)))
+    if ctx.json:
+        print(json.dumps({s: sorted(t.id for t in ds.split(s)) for s in SPLITS}, indent=2))
+        return 0
+    for name in SPLITS:
+        tasks = ds.split(name)
+        label = _c(BOLD, f"{name} ({len(tasks)})")
+        note = _c(DIM, "  -- held out; never optimized against") if name == "test" else ""
+        print(f"  {label}{note}")
+        for t in tasks:
+            print(f"      {t.id}")
+    print(_c(DIM, "\n  Assignment is a hash of the task id, so it is stable across "
+                  "machines and runs. A `split` tag overrides it."))
+    return 0
+
+
+def cmd_prices(args: argparse.Namespace) -> int:
+    """Show configured model prices; cost is UNKNOWN without them."""
+    ctx = Ctx(args)
+    if not ctx.prices:
+        print("no model prices configured -- cost is reported as UNKNOWN, never as zero.")
+        print("\nAdd to agentwb.json:")
+        print('  "model_prices": {"<model>": '
+              '{"input_per_mtok": 0.00, "output_per_mtok": 0.00}}')
+        return 0
+    for model in ctx.prices.models:
+        price = ctx.prices.price_for(model)
+        print(f"  {model}: ${price.input_per_mtok}/Mtok in, "
+              f"${price.output_per_mtok}/Mtok out")
+    return 0
+
+
 def cmd_tasks(args: argparse.Namespace) -> int:
     ctx = Ctx(args)
     tasks = load_tasks(Path(args.tasks))
@@ -511,6 +551,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("prompts", help="list registered prompt versions")
     sp.set_defaults(func=cmd_prompts)
+
+    sp = sub.add_parser("splits", help="show train/dev/test/regression assignment")
+    sp.add_argument("--tasks", default="tasks")
+    sp.set_defaults(func=cmd_splits)
+
+    sp = sub.add_parser("prices", help="show configured model prices")
+    sp.set_defaults(func=cmd_prices)
 
     sp = sub.add_parser("tasks", help="list task definitions")
     sp.add_argument("--tasks", default="tasks")
