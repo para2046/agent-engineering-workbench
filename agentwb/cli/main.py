@@ -24,6 +24,7 @@ from ..analysis import failure_analyzer
 from ..config import Settings
 from ..evals.harness import Harness, load_tasks
 from ..judge.client import JudgeClient
+from ..experience.retrieval import ExperienceRetriever
 from ..experience.store import ExperienceStore
 from ..experiments.comparison import compare, summarize_task_results
 from ..providers.base import ProviderError, available_providers, build_provider
@@ -55,10 +56,15 @@ class Ctx:
         self.store = TrajectoryStore(self.settings.data_dir)
         self.experience = ExperienceStore(self.settings.data_dir / "experience")
         self.judge = self._build_judge(args)
+        retrieve_k = getattr(args, "retrieve", 0) or 0
+        self.retriever = (
+            ExperienceRetriever(self.experience, k=retrieve_k) if retrieve_k > 0 else None
+        )
         self.harness = Harness(
             self.store, self.experience, self.settings.data_dir / "workspaces",
             judge=self.judge,
             analyze_failures=not getattr(args, "no_analysis", False),
+            retriever=self.retriever,
         )
         self.json = getattr(args, "json", False)
 
@@ -425,6 +431,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--provider", help="mock | claude | openai (default from config)")
         sp.add_argument("--model", help="model id override")
 
+    def add_retrieval_flags(sp):
+        sp.add_argument("--retrieve", type=int, metavar="K", default=0,
+                        help="inject up to K relevant past experiences from earlier "
+                             "runs on OTHER tasks (0 = off). Same-task retrieval is "
+                             "always refused: it would leak the answer.")
+
     def add_judge_flags(sp):
         sp.add_argument("--judge-provider",
                         help="provider for model graders and failure analysis; "
@@ -438,6 +450,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-analysis", action="store_true", help="skip failure analysis")
     add_provider_flags(sp)
     add_judge_flags(sp)
+    add_retrieval_flags(sp)
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("eval", help="run a suite, or re-grade an existing run")
@@ -449,6 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-analysis", action="store_true")
     add_provider_flags(sp)
     add_judge_flags(sp)
+    add_retrieval_flags(sp)
     sp.set_defaults(func=cmd_eval)
 
     sp = sub.add_parser("inspect", help="show a trajectory step by step")
@@ -473,6 +487,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-analysis", action="store_true")
     add_provider_flags(sp)
     add_judge_flags(sp)
+    add_retrieval_flags(sp)
     sp.set_defaults(func=cmd_regress)
 
     sp = sub.add_parser("annotate", help="attach a human correction to a run")

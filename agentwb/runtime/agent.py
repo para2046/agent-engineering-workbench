@@ -62,6 +62,7 @@ class AgentRunner:
         tool_timeout: int = 60,
         system_prompt: str = SYSTEM_PROMPT,
         prompt_version: str = SYSTEM_PROMPT_VERSION,
+        retriever=None,
     ):
         self.provider = provider
         self.workspace = Path(workspace)
@@ -69,6 +70,7 @@ class AgentRunner:
         self.registry = ToolRegistry(self.workspace, raw, timeout=tool_timeout)
         self.system_prompt = system_prompt
         self.prompt_version = prompt_version
+        self.retriever = retriever
 
     def run(self, task: Task, trial: int = 0, run_id: Optional[str] = None) -> Trajectory:
         reset_provider(self.provider)
@@ -89,7 +91,19 @@ class AgentRunner:
         self.recorder.open(traj)
 
         tools = self.registry.schemas(task.tools)
-        messages: list[Message] = [Message(role="user", content=self._task_message(task))]
+
+        # Retrieval happens once, before the first turn, and what it injected is
+        # recorded on the trajectory. A run that was shown past experience and
+        # does not say so is not reproducible.
+        context = ""
+        if self.retriever is not None:
+            retrieved = self.retriever.retrieve(task)
+            traj.retrieval = retrieved.provenance
+            context = retrieved.as_context()
+
+        messages: list[Message] = [
+            Message(role="user", content=self._task_message(task, context))
+        ]
         monitor = TerminationMonitor(max_steps=task.max_steps)
         total = Usage()
         step_no = 0
@@ -159,10 +173,12 @@ class AgentRunner:
 
     # -- helpers ----------------------------------------------------------
     @staticmethod
-    def _task_message(task: Task) -> str:
+    def _task_message(task: Task, context: str = "") -> str:
         parts = [f"TASK ({task.id}):", task.prompt]
         if task.success_criteria:
             parts += ["", "SUCCESS CRITERIA:", task.success_criteria]
+        if context:
+            parts += ["", context]
         return "\n".join(parts)
 
     @staticmethod

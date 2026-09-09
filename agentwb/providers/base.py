@@ -57,27 +57,53 @@ def register_provider(key: str, cls: type) -> None:
     _REGISTRY[key] = cls
 
 
+# Which module registers which key. Kept as data so that adding an adapter is
+# one line here, and so a key can never point at a module that does not exist
+# without that being obvious.
+_ADAPTER_MODULES: dict[str, str] = {
+    "mock": "mock",
+    "scripted": "mock",
+    "claude": "claude",
+    "anthropic": "claude",
+    "openai": "openai_provider",
+    "chatgpt": "openai_provider",
+}
+
+
 def build_provider(key: str, **kwargs) -> ModelProvider:
-    """Construct a provider by key. Adapters are imported lazily so that a
-    missing optional SDK never breaks the rest of the CLI."""
+    """Construct a provider by key.
+
+    Adapters are imported lazily so a missing optional SDK never breaks the
+    rest of the CLI. Any import failure becomes a ProviderError -- a raw
+    ImportError leaking out of here once made `--provider openai` look like a
+    crash rather than a missing adapter.
+    """
     if key not in _REGISTRY:
-        # lazy import of built-ins
-        if key == "mock":
-            from . import mock  # noqa: F401
-        elif key in ("claude", "anthropic"):
-            from . import claude  # noqa: F401
-        elif key in ("openai", "chatgpt"):
-            from . import openai_provider  # noqa: F401
+        module = _ADAPTER_MODULES.get(key)
+        if module is not None:
+            try:
+                __import__(f"{__package__}.{module}", fromlist=["*"])
+            except ProviderError:
+                raise
+            except ImportError as exc:
+                raise ProviderError(
+                    f"provider {key!r} could not be loaded: {exc}"
+                ) from exc
+
     if key not in _REGISTRY:
-        known = ", ".join(sorted(_REGISTRY)) or "none loaded"
-        raise ProviderError(f"unknown provider {key!r} (registered: {known})")
+        known = ", ".join(sorted(set(_ADAPTER_MODULES))) or "none"
+        raise ProviderError(f"unknown provider {key!r} (available: {known})")
     return _REGISTRY[key](**kwargs)
 
 
 def available_providers() -> list[str]:
-    for mod in ("mock", "claude", "openai_provider"):
+    """Every provider key that can be requested, whether or not its SDK is
+    installed. A key whose SDK is missing still resolves -- it raises a
+    ProviderError telling you what to install, which is more useful than
+    silently vanishing from the list."""
+    for mod in set(_ADAPTER_MODULES.values()):
         try:
             __import__(f"{__package__}.{mod}", fromlist=["*"])
         except Exception:
             pass
-    return sorted(_REGISTRY)
+    return sorted(set(_ADAPTER_MODULES) | set(_REGISTRY))

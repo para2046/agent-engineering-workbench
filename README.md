@@ -9,7 +9,7 @@ TASK → AGENT → ACTION → ENVIRONMENT → OBSERVATION → TRAJECTORY
      → OUTCOME → EVALUATION → FAILURE ANALYSIS → EXPERIENCE STORE ↺
 ```
 
-**Status: V0 — complete.** Single agent, trajectory logging, deterministic evaluation, model-based judging, failure analysis, and local experience storage. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
+**Status: V1 — complete.** Single agent, trajectory logging, deterministic evaluation, model-based judging, failure analysis, experience storage *and retrieval*, Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
 
 ---
 
@@ -41,7 +41,7 @@ agentwb run tasks/fix_divide_bug_unguided.json --provider claude --model claude-
 Run the tests:
 
 ```bash
-python -m unittest discover -s tests -t .    # 98 tests, no network
+python -m unittest discover -s tests -t .    # 121 tests, no network
 ```
 
 ---
@@ -95,6 +95,7 @@ agentwb/
   providers/            one adapter per model vendor
     base.py             the entire contract: (system, messages, tools) -> ModelResponse
     claude.py           Anthropic adapter (optional SDK)
+    openai_provider.py  OpenAI adapter (optional SDK)
     mock.py             ScriptedProvider (tests) + RuleProvider (runs with no API key)
 
   aci/                  the agent-computer interface
@@ -123,7 +124,9 @@ agentwb/
   analysis/
     failure_analyzer.py deterministic signals first, model interpretation on top
 
-  experience/store.py   (situation, action, observation, outcome, evaluation, correction)
+  experience/
+    store.py            (situation, action, observation, outcome, evaluation, correction)
+    retrieval.py        small, diverse, uncontaminated past experience
   experiments/comparison.py   CONFOUNDED_EXPERIMENT detection
   cli/main.py
 ```
@@ -211,6 +214,31 @@ Consequences worth knowing:
 - **Findings are gated on task shape.** A research task that writes prose is never told it should have run the tests.
 - **It is a hypothesis.** The CLI says so on every printout. Nothing downstream treats it as a verdict.
 
+### Experience retrieval
+
+Past runs become context for new ones — `--retrieve K` injects up to K relevant experiences from earlier runs.
+
+```bash
+agentwb run tasks/some_new_task.json --retrieve 3
+```
+
+The temptation with a store full of past runs is to shovel it into the prompt. Three constraints prevent that:
+
+- **Small.** Three by default, each compressed to *tool sequence + outcome*. Not transcripts. Arguments are deliberately excluded — they carry another task's file paths and literal edits, which is noise at best and a leak at worst.
+- **Diverse.** Greedy top-k returns five near-identical retries of one task. Selection is maximal-marginal-relevance: each pick is penalised by its similarity to what is already chosen, so the set spans approaches.
+- **Uncontaminated.** This one is not a preference. **Retrieving a past run of the task now being attempted is refused unconditionally** — it would hand the agent the answer and turn the eval into a lookup. Tasks tagged `holdout` / `held-out` / `test` / `benchmark` are excluded as sources entirely.
+
+Every run records what it was shown, in `trajectory.retrieval`:
+
+```json
+{ "retrieved": [{ "task_id": "other_bugfix", "outcome": "PASS", "score": 0.31 }],
+  "considered": 12, "excluded_same_task": 1, "excluded_held_out": 0 }
+```
+
+Retrieval that leaves no trace is unfalsifiable — you cannot later ask whether a score was earned or looked up. An eval you have quietly leaked into cannot be un-leaked, and nothing in the output will look wrong.
+
+Scoring is lexical (Jaccard over content terms), not embeddings. Crude, transparent, adequate at this volume — and unlike a vector store it can explain *why* a given experience was shown. Swap it when retrieval volume justifies the infrastructure, not before.
+
 ---
 
 ## Writing a task
@@ -275,9 +303,9 @@ Failure data is never deleted because a later version succeeded. The failures ar
 
 | | Adds | Status |
 |---|---|---|
-| **V0** | single agent, trajectory logging, deterministic eval, **LLM-judge graders**, **failure analysis**, prompt versioning, experience store, CLI, 98 tests | **done** |
-| V1 | experience retrieval before difficult tasks — small diverse sets, provenance tracked, no benchmark contamination | next |
-| V2 | DSPy / GEPA optimization against explicit datasets, train/dev/test/regression splits, promotion gate | |
+| **V0** | single agent, trajectory logging, deterministic eval, LLM-judge graders, failure analysis, prompt versioning, experience store, CLI | **done** |
+| **V1** | **experience retrieval** — small diverse sets, provenance tracked, contamination refused; **OpenAI adapter** | **done** |
+| V2 | DSPy / GEPA optimization against explicit datasets, train/dev/test/regression splits, promotion gate | next |
 | V3 | Claude + OpenAI structured multi-agent protocol, disagreement resolved by discriminative experiment | |
 | V4 | adversarial search for difficult failure cases | |
 
@@ -297,3 +325,5 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **The RuleProvider is a fixture, not a model.** It does no reasoning, and it cannot do the research task at all. Never quote its scores as agent performance.
 - **Judges are unvalidated against human labels.** They are graders, not truth. Use `annotate` to record human verdicts, and check whether the judge agrees before you trust a dimension. *Who validates the validators* is a real question and V0 does not answer it.
 - **Judge cost is unbounded per run.** Four judged dimensions means four model calls per trial, multiplied by `--trials`. Deterministic graders are free; put them first, which the bundled task does.
+- **No cost metric yet.** Tokens are tracked; spec section 27's `estimated cost` and the `utility = success - λ·cost` objective are not implemented, so optimization cannot yet trade quality against spend.
+- **Retrieval is off by default.** It only helps once the store has history from *other* tasks; on an empty store it correctly returns nothing.

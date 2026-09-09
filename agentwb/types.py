@@ -338,6 +338,7 @@ class Trajectory:
     termination_reason: str = ""
     failure_categories: list[str] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
+    retrieval: dict[str, Any] = field(default_factory=dict)   # what past experience was injected
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -358,6 +359,7 @@ class Trajectory:
             "termination_reason": self.termination_reason,
             "failure_categories": self.failure_categories,
             "metrics": self.metrics,
+            "retrieval": self.retrieval,
         }
 
     @staticmethod
@@ -376,6 +378,7 @@ class Trajectory:
             termination_reason=d.get("termination_reason", ""),
             failure_categories=list(d.get("failure_categories") or []),
             metrics=d.get("metrics") or {},
+            retrieval=d.get("retrieval") or {},
         )
         t.steps = [Step(**s) for s in (d.get("steps") or [])]
         t.final_output = d.get("final_output") or {}
