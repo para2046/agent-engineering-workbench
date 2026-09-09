@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentwb"
+version = "0.1.0"
+description = "Agent Engineering Workbench - measurable agent behaviour, reproducible failures, reusable experience"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+claude = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]
+yaml = ["pyyaml>=6"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+agentwb = "agentwb.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["agentwb*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,6 @@
+{
+  "data_dir": "data",
+  "provider": "mock",
+  "model": null,
+  "tool_timeout": 60
+}
