@@ -1,0 +1,65 @@
+{
+  "id": "dev_disagreement_flow",
+  "tags": [
+    "development",
+    "capability"
+  ],
+  "prompt": "Implement flow.py so the full test suite passes.\n\nIt visualizes how the multi-agent disagreement protocol settled a dispute. The input is an exchange.json; sample_flow.json (resolved by experiment) and sample_unresolved.json (HUMAN_REQUIRED) show both shapes. The tests in test_flow.py are the specification. Do not modify them.\n\nDesign the page as a vertical process ladder, top to bottom:\n1. the two hypotheses side by side (agent, claim, own evidence),\n2. the discriminating experiment with BOTH predictions shown before the result,\n3. the observation the environment returned,\n4. the verdict: winner supported, loser refuted, basis stated -- or HUMAN_REQUIRED with neither marked.\n\nThe point the page must make visually: the predictions were written down before the observation existed, and the environment -- not an opinion -- decided. Inline CSS only; readable in light and dark.",
+  "success_criteria": "All tests pass: flows load and pair correctly, every ladder stage renders in order, both predictions and the observation are shown, winner/loser are marked, the unresolved case renders honestly, and the CLI writes a valid file.",
+  "environment": {
+    "files": {
+      "flow.py": "\"\"\"Disagreement-resolution flow visualizer.\n\nRenders how a dispute between two agents was settled: the competing\nhypotheses, the predictions each made before the experiment ran, the\nobservation the environment returned, and the verdict.\n\nImplementation pending.\n\"\"\"\n\n\ndef load_flows(path):\n    \"\"\"Extract disagreement flows from an exchange.json.\n\n    Returns a list of {\"a\": msg, \"b\": msg, \"outcome\": dict, \"winner_side\":\n    \"a\"|\"b\"|None} where a/b are the two conflicting HYPOTHESIS messages\n    (paired with the outcome via the winner message_id and sender names).\n    \"\"\"\n    raise NotImplementedError\n\n\ndef render(flows, title):\n    \"\"\"Render flows as a self-contained HTML page showing the ladder.\"\"\"\n    raise NotImplementedError\n\n\nif __name__ == \"__main__\":\n    import sys\n    raise NotImplementedError\n",
+      "test_flow.py": "import json\nimport subprocess\nimport sys\nimport unittest\nfrom pathlib import Path\n\nfrom flow import load_flows, render\n\n\ndef load(name):\n    return load_flows(Path(name))\n\n\nclass TestLoading(unittest.TestCase):\n    def test_flow_pairs_the_disagreement_with_its_hypotheses(self):\n        [flow] = load(\"sample_flow.json\")\n        self.assertEqual(flow[\"a\"][\"sender\"], \"researcher\")\n        self.assertEqual(flow[\"b\"][\"sender\"], \"engineer\")\n        self.assertEqual(flow[\"outcome\"][\"resolution\"], \"RESOLVED_BY_EXPERIMENT\")\n\n    def test_the_winner_is_identified_by_message_id(self):\n        [flow] = load(\"sample_flow.json\")\n        self.assertEqual(flow[\"winner_side\"], \"a\")\n\n    def test_an_unresolved_flow_has_no_winner(self):\n        [flow] = load(\"sample_unresolved.json\")\n        self.assertIsNone(flow[\"winner_side\"])\n\n    def test_an_exchange_without_disagreements_yields_no_flows(self):\n        Path(\"plain.json\").write_text(json.dumps({\"messages\": [], \"disagreements\": []}),\n                                      encoding=\"utf-8\")\n        self.assertEqual(load(\"plain.json\"), [])\n\n\nclass TestRendering(unittest.TestCase):\n    def _html(self, name=\"sample_flow.json\", title=\"demo\"):\n        return render(load(name), title=title)\n\n    def test_both_hypotheses_and_their_agents_appear(self):\n        html = self._html()\n        self.assertIn(\"researcher\", html)\n        self.assertIn(\"engineer\", html)\n        self.assertIn(\"the migration dropped cust_idx\", html)\n\n    def test_content_is_escaped(self):\n        html = self._html()\n        self.assertNotIn(\"<i>per-item</i>\", html)\n        self.assertIn(\"&lt;i&gt;per-item&lt;/i&gt;\", html)\n\n    def test_the_ladder_stages_are_visible_in_order(self):\n        \"\"\"The process is the subject: hypotheses, then the predictions made\n        BEFORE the run, then the observation, then the verdict.\"\"\"\n        html = self._html().lower()\n        for stage in (\"hypotheses\", \"prediction\", \"observ\", \"verdict\"):\n            self.assertIn(stage, html)\n        self.assertLess(html.index(\"prediction\"), html.index(\"verdict\"))\n\n    def test_both_predictions_are_shown(self):\n        html = self._html()\n        self.assertIn(\"all indexes present\", html)\n        self.assertIn(\"cust_idx absent\", html)\n\n    def test_the_observation_is_shown(self):\n        self.assertIn(\"orders_idx BTREE active\", self._html())\n\n    def test_the_winner_is_marked_and_the_loser_is_not(self):\n        html = self._html()\n        self.assertIn('data-verdict=\"supported\"', html)\n        self.assertIn('data-verdict=\"refuted\"', html)\n\n    def test_resolution_and_basis_are_stated(self):\n        html = self._html()\n        self.assertIn(\"RESOLVED_BY_EXPERIMENT\", html)\n        self.assertIn(\"environment outcome\", html)\n\n    def test_unresolved_renders_human_required_without_a_winner(self):\n        html = self._html(\"sample_unresolved.json\")\n        self.assertIn(\"HUMAN_REQUIRED\", html)\n        self.assertNotIn('data-verdict=\"supported\"', html)\n\n    def test_has_a_title_tag(self):\n        self.assertIn(\"<title>Ladder</title>\", self._html(title=\"Ladder\"))\n\n\nclass TestCli(unittest.TestCase):\n    def test_cli_writes_the_output_file(self):\n        out = Path(\"out_flow.html\")\n        proc = subprocess.run([sys.executable, \"flow.py\", \"sample_flow.json\", str(out)],\n                              capture_output=True, text=True)\n        self.assertEqual(proc.returncode, 0, proc.stderr)\n        self.assertIn(\"RESOLVED_BY_EXPERIMENT\", out.read_text(encoding=\"utf-8\"))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n",
+      "sample_flow.json": "{\n  \"task_id\": \"demo\",\n  \"termination_reason\": \"SUCCESS\",\n  \"messages\": [\n    {\n      \"message_id\": \"m_a\",\n      \"sender\": \"researcher\",\n      \"recipient\": \"engineer\",\n      \"type\": \"HYPOTHESIS\",\n      \"round\": 1,\n      \"claim\": \"the pool is exhausted by <i>per-item</i> lookups\",\n      \"evidence\": [\n        {\n          \"source\": \"metrics\",\n          \"observation\": \"pool 100/100, cpu flat\"\n        }\n      ],\n      \"confidence\": 0.65,\n      \"unknowns\": [\n        \"why one lookup is slow\"\n      ]\n    },\n    {\n      \"message_id\": \"m_b\",\n      \"sender\": \"engineer\",\n      \"recipient\": \"researcher\",\n      \"type\": \"HYPOTHESIS\",\n      \"round\": 1,\n      \"claim\": \"the migration dropped cust_idx\",\n      \"evidence\": [\n        {\n          \"source\": \"deploy_log\",\n          \"observation\": \"migration applied 14:02\"\n        }\n      ],\n      \"confidence\": 0.6,\n      \"unknowns\": [\n        \"did it touch indexes\"\n      ]\n    }\n  ],\n  \"disagreements\": [\n    {\n      \"resolution\": \"RESOLVED_BY_EXPERIMENT\",\n      \"winner\": \"m_a\",\n      \"winning_agent\": \"researcher\",\n      \"basis\": \"environment outcome\",\n      \"experiment\": {\n        \"discriminative\": true,\n        \"experiment\": \"SHOW INDEXES FROM orders\",\n        \"metric\": \"index listing\",\n        \"expected_if_a\": \"all indexes present\",\n        \"expected_if_b\": \"cust_idx absent\",\n        \"reasoning\": \"the listings differ\"\n      },\n      \"evidence\": [\n        {\n          \"source\": \"experiment\",\n          \"observation\": \"orders_idx BTREE active; cust_idx BTREE active\"\n        }\n      ],\n      \"notes\": []\n    }\n  ],\n  \"metrics\": {\n    \"rounds\": 1,\n    \"handoffs\": 2\n  }\n}",
+      "sample_unresolved.json": "{\n  \"task_id\": \"demo2\",\n  \"termination_reason\": \"HUMAN_REQUIRED\",\n  \"messages\": [\n    {\n      \"message_id\": \"x_a\",\n      \"sender\": \"researcher\",\n      \"recipient\": \"engineer\",\n      \"type\": \"HYPOTHESIS\",\n      \"round\": 1,\n      \"claim\": \"cache stampede\",\n      \"evidence\": [\n        {\n          \"source\": \"logs\",\n          \"observation\": \"burst at 14:10\"\n        }\n      ]\n    },\n    {\n      \"message_id\": \"x_b\",\n      \"sender\": \"engineer\",\n      \"recipient\": \"researcher\",\n      \"type\": \"HYPOTHESIS\",\n      \"round\": 1,\n      \"claim\": \"dns flap\",\n      \"evidence\": [\n        {\n          \"source\": \"logs\",\n          \"observation\": \"resolver warnings\"\n        }\n      ]\n    }\n  ],\n  \"disagreements\": [\n    {\n      \"resolution\": \"HUMAN_REQUIRED\",\n      \"winner\": null,\n      \"winning_agent\": null,\n      \"basis\": \"no available observation distinguishes the two hypotheses\",\n      \"experiment\": {\n        \"discriminative\": false,\n        \"experiment\": \"\",\n        \"metric\": \"\",\n        \"expected_if_a\": \"\",\n        \"expected_if_b\": \"\",\n        \"reasoning\": \"both predict the same burst pattern\"\n      },\n      \"evidence\": [],\n      \"notes\": []\n    }\n  ],\n  \"metrics\": {\n    \"rounds\": 1,\n    \"handoffs\": 2\n  }\n}"
+    }
+  },
+  "max_steps": 16,
+  "trials": 1,
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true,
+      "weight": 3.0
+    },
+    {
+      "type": "tool_used",
+      "name": "verified_with_tests",
+      "required": true,
+      "params": {
+        "tool": "run_tests"
+      }
+    },
+    {
+      "type": "no_forbidden_changes",
+      "name": "left_tests_alone",
+      "required": true,
+      "params": {
+        "paths": [
+          "test_flow.py",
+          "sample_flow.json",
+          "sample_unresolved.json"
+        ]
+      }
+    },
+    {
+      "type": "file_contains",
+      "name": "not_a_stub",
+      "required": true,
+      "params": {
+        "path": "flow.py",
+        "text": "NotImplementedError",
+        "absent": true
+      }
+    },
+    {
+      "type": "max_steps",
+      "name": "efficiency",
+      "required": false,
+      "params": {
+        "limit": 12
+      }
+    }
+  ]
+}

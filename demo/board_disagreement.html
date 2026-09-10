@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disagreement Ladder</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --ink: #1c2330; --muted: #5b6474;
+    --line: #d7dbe3; --spine: #c3c9d4;
+    --a-accent: #2563eb; --a-soft: #eaf1fe; --a-ink: #1d4ed8;
+    --b-accent: #d97706; --b-soft: #fdf3e3; --b-ink: #b45309;
+    --win: #15803d; --win-soft: #e8f6ec; --lose: #b91c1c; --lose-soft: #fdecec;
+    --env: #0e7490; --env-soft: #e6f6fa;
+    --human: #7c3aed; --human-soft: #f3edfd;
+    --seal: #475569; --seal-soft: #eef1f5;
+    --shadow: 0 1px 3px rgba(16, 24, 40, .08), 0 8px 24px rgba(16, 24, 40, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --card: #1b202b; --ink: #e8ebf1; --muted: #9aa3b2;
+      --line: #2c3342; --spine: #38404f;
+      --a-accent: #60a5fa; --a-soft: #1a2740; --a-ink: #93c0fd;
+      --b-accent: #fbbf24; --b-soft: #35270e; --b-ink: #fcd34d;
+      --win: #4ade80; --win-soft: #10301c; --lose: #f87171; --lose-soft: #3a1414;
+      --env: #22d3ee; --env-soft: #0a2a33;
+      --human: #c4b5fd; --human-soft: #241a3d;
+      --seal: #aab4c4; --seal-soft: #232937;
+      --shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 8px 24px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    padding: 48px 20px 72px;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  header.page { text-align: center; margin-bottom: 40px; }
+  header.page h1 { font-size: 26px; letter-spacing: -.02em; }
+  header.page p { color: var(--muted); margin-top: 6px; font-size: 15px; }
+  .flow { position: relative; padding-left: 56px; }
+  .flow::before {
+    content: ""; position: absolute; left: 19px; top: 8px; bottom: 8px;
+    width: 2px; background: var(--spine); border-radius: 1px;
+  }
+  section.stage { position: relative; margin-bottom: 36px; }
+  .stagemark {
+    position: absolute; left: -56px; top: 0; width: 40px; height: 40px;
+    border-radius: 50%; background: var(--card); border: 2px solid var(--spine);
+    color: var(--muted); font-weight: 700; font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow);
+  }
+  .stagehead { margin-bottom: 14px; }
+  .stagehead h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--muted); font-weight: 700;
+  }
+  .stagehead .sub { font-size: 14px; color: var(--muted); margin-top: 2px; }
+  .duo { display: flex; gap: 16px; flex-wrap: wrap; }
+  .duo > * { flex: 1 1 260px; min-width: 0; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .card.side-a { border-top: 4px solid var(--a-accent); }
+  .card.side-b { border-top: 4px solid var(--b-accent); }
+  .agent {
+    display: inline-block; font-size: 12px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 999px; margin-bottom: 10px;
+  }
+  .side-a .agent { background: var(--a-soft); color: var(--a-ink); }
+  .side-b .agent { background: var(--b-soft); color: var(--b-ink); }
+  .claim { font-size: 17px; font-weight: 600; line-height: 1.4; }
+  .ev { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+  .ev h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); margin-bottom: 6px;
+  }
+  .ev ul { list-style: none; }
+  .ev li { font-size: 14px; color: var(--muted); padding: 2px 0; }
+  .ev li .src {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; background: var(--seal-soft); color: var(--seal);
+    border-radius: 6px; padding: 1px 6px; margin-right: 6px;
+  }
+  .conf { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .sealbar {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--seal-soft); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13.5px; color: var(--seal);
+  }
+  .sealbar .lock { font-size: 16px; }
+  .sealbar strong { color: var(--ink); }
+  .probe {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px; background: var(--seal-soft); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
+    overflow-x: auto; white-space: pre-wrap;
+  }
+  .probe .metric { color: var(--muted); font-size: 12.5px; display: block;
+    margin-top: 4px; font-family: inherit; }
+  .expects .lead {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin-bottom: 6px; font-weight: 700;
+  }
+  .expects .stmt { font-size: 15px; }
+  .expects .stmt em { font-style: normal; font-weight: 700; }
+  .side-a .stmt em { color: var(--a-ink); }
+  .side-b .stmt em { color: var(--b-ink); }
+  .reason { margin-top: 12px; font-size: 14px; color: var(--muted); }
+  .envcard {
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 5px solid var(--env); border-radius: 14px;
+    padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .envcard .who {
+    display: inline-block; font-size: 12px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase;
+    background: var(--env-soft); color: var(--env);
+    padding: 3px 10px; border-radius: 999px; margin-bottom: 10px;
+  }
+  .envcard .obs {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14.5px; white-space: pre-wrap; overflow-x: auto;
+  }
+  .envcard .none { color: var(--muted); font-style: italic; font-size: 15px; }
+  .rescard {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 20px; box-shadow: var(--shadow);
+  }
+  .resbadge {
+    display: inline-block; font-size: 12.5px; font-weight: 800;
+    letter-spacing: .08em; padding: 5px 14px; border-radius: 999px;
+    margin-bottom: 12px;
+  }
+  .resbadge.by-experiment { background: var(--win-soft); color: var(--win); }
+  .resbadge.by-human { background: var(--human-soft); color: var(--human); }
+  .basis { font-size: 14.5px; color: var(--muted); margin-bottom: 14px; }
+  .basis strong { color: var(--ink); }
+  .callout { display: flex; gap: 16px; flex-wrap: wrap; }
+  .callout > * { flex: 1 1 240px; }
+  .fate {
+    border-radius: 12px; padding: 14px 16px; border: 1px solid var(--line);
+  }
+  .fate .who { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; margin-bottom: 4px; }
+  .fate .word { font-size: 18px; font-weight: 800; letter-spacing: .02em; }
+  .fate.won { background: var(--win-soft); border-color: var(--win); }
+  .fate.won .word, .fate.won .who { color: var(--win); }
+  .fate.lost { background: var(--lose-soft); border-color: var(--lose); }
+  .fate.lost .word, .fate.lost .who { color: var(--lose); }
+  .fate.open { background: var(--human-soft); border-color: var(--human); }
+  .fate.open .word, .fate.open .who { color: var(--human); }
+  .decider { margin-top: 14px; font-size: 14px; color: var(--muted);
+    border-top: 1px dashed var(--line); padding-top: 10px; }
+  footer { text-align: center; color: var(--muted); font-size: 13px;
+    margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+<header class="page"><h1>How the disagreement was settled</h1><p>Claims first, committed expectations second, the world&rsquo;s answer third &mdash; in that order, on the record.</p></header>
+<div class="flow"><section class="stage"><div class="stagemark">1</div><div class="stagehead"><h2>Hypotheses</h2><p class="sub">Two agents disagree. Each states a claim and the evidence behind it.</p></div><div class="duo"><article class="card side-a" data-side="a"><span class="agent">researcher</span><p class="claim">&ldquo;checkout latency is connection-pool exhaustion from per-item currency lookups&rdquo;</p><div class="ev"><h3>Their own evidence</h3><ul><li><span class="src">metrics.csv</span>pool_in_use 12 -&gt; 100/100 at 14:10 while db_cpu stays ~43%</li></ul></div><p class="conf">stated confidence: 0.65</p></article><article class="card side-b" data-side="b"><span class="agent">engineer</span><p class="claim">&ldquo;the orders table lost its customer index in the 14:00 schema migration&rdquo;</p><div class="ev"><h3>Their own evidence</h3><ul><li><span class="src">deploy_log</span>migration 0042_orders_rework applied at 14:02</li></ul></div><p class="conf">stated confidence: 0.6</p></article></div></section><section class="stage"><div class="stagemark">2</div><div class="stagehead"><h2>Predictions &mdash; written first</h2><p class="sub">One discriminating test, and what each side commits to expecting from it.</p></div><div class="sealbar"><span class="lock">&#128274;</span><span>recorded <strong>before the result existed</strong> &mdash; neither agent can move the goalposts afterwards</span></div><div class="probe">$ SHOW INDEXES FROM orders<span class="metric">metric: index listing</span></div><div class="duo"><div class="card side-a expects" data-side="a"><span class="agent">researcher</span><p class="lead">If this hypothesis is true</p><p class="stmt">&rarr; <em>all indexes present and active (pool theory: indexes are fine)</em></p></div><div class="card side-b expects" data-side="b"><span class="agent">engineer</span><p class="lead">If this hypothesis is true</p><p class="stmt">&rarr; <em>cust_idx absent from the listing (migration dropped it)</em></p></div></div><p class="reason">Why this discriminates: the two hypotheses predict different index listings, and the listing is one cheap read</p></section><section class="stage"><div class="stagemark">3</div><div class="stagehead"><h2>Observation</h2><p class="sub">What the environment actually returned &mdash; produced after, and independently of, the predictions above.</p></div><div class="envcard"><span class="who">environment</span><p class="obs">orders_idx  BTREE  active
+cust_idx  BTREE  active</p></div></section><section class="stage"><div class="stagemark">4</div><div class="stagehead"><h2>Verdict</h2></div><div class="rescard"><span class="resbadge by-experiment">RESOLVED_BY_EXPERIMENT</span><p class="basis">Basis: <strong>environment outcome</strong></p><div class="callout"><div class="fate won" data-verdict="supported" data-side="a"><p class="who">researcher</p><p class="word">SUPPORTED</p></div><div class="fate lost" data-verdict="refuted" data-side="b"><p class="who">engineer</p><p class="word">REFUTED</p></div></div><p class="decider">The observation matched one written prediction and not the other. The environment decided; no one&rsquo;s opinion did.</p></div></section></div>
+<footer>Generated by flow.py &middot; the ladder reads top to bottom, in the order things happened.</footer>
+</main>
+</body>
+</html>
