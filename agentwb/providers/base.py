@@ -63,6 +63,9 @@ def register_provider(key: str, cls: type) -> None:
 _ADAPTER_MODULES: dict[str, str] = {
     "mock": "mock",
     "scripted": "mock",
+    # protocol-speaking fixture, so the multi-agent rung is demonstrable
+    # offline; lives with the judge fixtures rather than the real adapters.
+    "mock-role": "..judge.mock",
     "claude": "claude",
     "anthropic": "claude",
     "openai": "openai_provider",
@@ -82,7 +85,9 @@ def build_provider(key: str, **kwargs) -> ModelProvider:
         module = _ADAPTER_MODULES.get(key)
         if module is not None:
             try:
-                __import__(f"{__package__}.{module}", fromlist=["*"])
+                target = (f"agentwb.judge.mock" if module.startswith("..")
+                          else f"{__package__}.{module}")
+                __import__(target, fromlist=["*"])
             except ProviderError:
                 raise
             except ImportError as exc:

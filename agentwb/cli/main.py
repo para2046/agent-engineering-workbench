@@ -371,6 +371,156 @@ def cmd_prompts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_multi_agent(args: argparse.Namespace) -> int:
+    """Run a task through the two-agent protocol, in a real workspace.
+
+    The environment is what makes this more than a transcript: the disagreement
+    ladder can run a discriminating experiment, and the graders judge what the
+    agents actually left behind.
+    """
+    from ..experiments.runner import run_exchange
+    from ..judge.client import JudgeClient
+    from ..runtime.orchestrator import Orchestrator, save_exchange
+
+    ctx = Ctx(args)
+    tasks = load_tasks(Path(args.task))
+    if not tasks:
+        print(f"no task files found at {args.task}", file=sys.stderr)
+        return 2
+
+    def build_client(provider_key, model):
+        kwargs = {"model": model} if model else {}
+        return JudgeClient(build_provider(provider_key or ctx.settings.provider, **kwargs))
+
+    # Two seats. Which provider fills which is configuration, not architecture.
+    agents = {
+        "researcher": build_client(args.researcher_provider, args.researcher_model),
+        "engineer": build_client(args.engineer_provider, args.engineer_model),
+    }
+
+    failures = 0
+    for task in tasks:
+        def factory(run_experiment, _task=task):
+            return Orchestrator(
+                agents,
+                max_rounds=args.max_rounds,
+                judge=ctx.judge,
+                run_experiment=run_experiment,
+            )
+
+        run = run_exchange(
+            task=task,
+            orchestrator_factory=factory,
+            workspaces_root=ctx.settings.data_dir / "exchanges",
+            grade=ctx.harness.grade if task.graders else None,
+            tool_timeout=args.timeout,
+        )
+        save_exchange(run.exchange, ctx.settings.data_dir / "exchanges" /
+                      run.run_id / "exchange.json")
+
+        if ctx.json:
+            print(json.dumps(run.to_dict(), indent=2, default=str))
+        else:
+            _print_exchange(run)
+        if not run.passed:
+            failures += 1
+
+    return 0 if failures == 0 else 1
+
+
+def _print_exchange(run) -> None:
+    ex = run.exchange
+    metrics = ex.metrics if isinstance(ex.metrics, dict) else ex.metrics.to_dict()
+    verdict = _verdict_mark("PASS" if run.passed else "FAIL") if run.evaluation else _c(DIM, "ungraded")
+    print(f"[{verdict}] {_c(BOLD, run.run_id)}  task={run.task_id}  "
+          f"term={ex.termination_reason}")
+
+    for m in ex.messages:
+        print(f"  {_c(DIM, f'r{m.round}')} {_c(BOLD, m.sender)} -> {m.recipient}  "
+              f"{m.type.value}")
+        print(f"      {m.claim[:200]}")
+        for e in m.evidence[:2]:
+            print(f"      {_c(DIM, f'evidence({e.source}): {e.observation[:140]}')}")
+
+    for v in ex.violations:
+        print(f"  {_c(RED, 'violation')} r{v.get('round')} {v.get('agent')}: {v.get('problem')}")
+
+    for d in ex.disagreements:
+        resolution = d.get("resolution") or d.get("outcome", {}).get("resolution")
+        basis = d.get("basis") or d.get("outcome", {}).get("basis") or ""
+        colour = GREEN if str(resolution).startswith("RESOLVED") else YELLOW
+        print(f"  {_c(colour, 'disagreement')}: {resolution}"
+              + (f" on {basis}" if basis else ""))
+
+    print(f"  metrics: {json.dumps(metrics)}")
+    if run.evaluation:
+        for r in run.evaluation.results:
+            print(f"    - {r.grader}: {_verdict_mark(r.verdict.value)}")
+    print(f"  workspace: {run.workspace}")
+
+
+def cmd_regress_from_failure(args: argparse.Namespace) -> int:
+    """Turn a recorded failure into a permanent regression task (spec section 19).
+
+    The flywheel's closing link: a fixed bug that never becomes a test can come
+    back silently, and the failure data you already paid for is the cheapest
+    source of a task that would catch it.
+    """
+    from ..analysis import failure_analyzer as fa
+
+    ctx = Ctx(args)
+    run_id = ctx.store.resolve(args.run_id)
+    traj = ctx.store.load(run_id)
+
+    source_tasks = {t.id: t for t in load_tasks(Path(args.tasks))}
+    original = source_tasks.get(traj.task_id)
+    if original is None:
+        print(f"no task definition for {traj.task_id!r} in {args.tasks} -- cannot "
+              f"reproduce the environment it failed in", file=sys.stderr)
+        return 2
+
+    analysis = fa.load(ctx.store.run_dir(run_id))
+    new_id = args.id or f"regression_{traj.task_id}_{run_id[-6:]}"
+
+    payload = {
+        "id": new_id,
+        "tags": sorted(set(original.tags) | {"regression"}),
+        "prompt": original.prompt,
+        "success_criteria": original.success_criteria,
+        "environment": {"files": dict(original.environment.files),
+                        "template_dir": original.environment.template_dir},
+        "max_steps": original.max_steps,
+        "trials": original.trials,
+        "graders": [
+            {"type": g.type, "name": g.label, "required": g.required,
+             "weight": g.weight, "params": g.params}
+            for g in original.graders
+        ],
+        "derived_from": {
+            "trajectory_id": run_id,
+            "failure_categories": traj.failure_categories,
+            "termination_reason": traj.termination_reason,
+            "recommended_test": (analysis.recommended_regression_test if analysis else ""),
+            "note": "generated from a recorded failure; review the graders before "
+                    "trusting this as a regression bar",
+        },
+    }
+
+    out = Path(args.out or args.tasks) / f"{new_id}.json"
+    if out.exists() and not args.force:
+        print(f"{out} already exists -- pass --force to overwrite", file=sys.stderr)
+        return 2
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    ctx.emit({"created": str(out), "task_id": new_id},
+             f"wrote regression task {_c(BOLD, new_id)} -> {out}\n"
+             + (f"  suggested check: {analysis.recommended_regression_test}\n"
+                if analysis and analysis.recommended_regression_test else "")
+             + _c(DIM, "  review the graders before trusting it as a regression bar"))
+    return 0
+
+
 def cmd_optimize(args: argparse.Namespace) -> int:
     """Propose candidate policies, evaluate them, and run the promotion gate.
 
@@ -659,6 +809,28 @@ def build_parser() -> argparse.ArgumentParser:
     add_provider_flags(sp)
     add_judge_flags(sp)
     sp.set_defaults(func=cmd_optimize)
+
+    sp = sub.add_parser("multi-agent",
+                        help="run a task through the two-agent protocol in a real workspace")
+    sp.add_argument("task")
+    sp.add_argument("--max-rounds", type=int, default=4)
+    sp.add_argument("--timeout", type=int, default=60)
+    sp.add_argument("--researcher-provider", help="provider for the research seat")
+    sp.add_argument("--researcher-model")
+    sp.add_argument("--engineer-provider", help="provider for the engineering seat")
+    sp.add_argument("--engineer-model")
+    add_provider_flags(sp)
+    add_judge_flags(sp)
+    sp.set_defaults(func=cmd_multi_agent)
+
+    sp = sub.add_parser("regression-from-failure",
+                        help="turn a recorded failure into a permanent regression task")
+    sp.add_argument("run_id")
+    sp.add_argument("--tasks", default="tasks")
+    sp.add_argument("--out", help="directory to write into (default --tasks)")
+    sp.add_argument("--id", help="task id for the new regression task")
+    sp.add_argument("--force", action="store_true")
+    sp.set_defaults(func=cmd_regress_from_failure)
 
     sp = sub.add_parser("splits", help="show train/dev/test/regression assignment")
     sp.add_argument("--tasks", default="tasks")

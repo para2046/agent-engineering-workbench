@@ -80,6 +80,8 @@ primary evidence  >  environment outcome  >  tests  >  predefined metric  >  jud
 | `regress [--tasks dir]` | Run every task tagged `regression`. |
 | `annotate <run_id>` | Attach a human correction (verdict, reclassification, note). |
 | `optimize` | Propose candidate policies, evaluate them, run the promotion gate. |
+| `multi-agent <task>` | Run a task through the two-agent protocol in a real workspace. |
+| `regression-from-failure <run_id>` | Turn a recorded failure into a permanent regression task. |
 | `splits` | Show train/dev/test/regression assignment. |
 | `tasks`, `prices`, `reindex`, `providers` | List tasks, model prices, rebuild the index, list adapters. |
 
@@ -139,6 +141,7 @@ agentwb/
     disagreement.py     resolved by experiment, never by vote
     researcher_engineer.py  role remits -- who may send what
   runtime/orchestrator.py   bounded rounds; a round must be earned
+  experiments/runner.py     builds the workspace an experiment actually runs in
 
   experience/
     store.py            (situation, action, observation, outcome, evaluation, correction)
@@ -329,6 +332,29 @@ Free-form chat between two capable models produces fluent agreement, drifts off 
 
 **Rounds must be earned.** After each exchange, if nothing new arrived — no fresh evidence, no experiment result, no claim not already on the table — the run stops with `NO_NEW_EVIDENCE`. Agents restating themselves more elaborately is the characteristic multi-agent failure, and it is expensive precisely because it looks like progress.
 
+Run the protocol offline, no API key:
+
+```bash
+agentwb multi-agent tasks/diagnose_latency_regression.json   --researcher-provider mock-role --engineer-provider mock-role
+```
+
+```
+r1 researcher -> engineer  HYPOTHESIS
+   the regression is a resource exhaustion, not a slow query
+   evidence(metrics.csv): pool_in_use 12 -> 100 while db_cpu_pct stays ~43
+r2 engineer -> researcher  FINAL_REPORT
+   findings.md records the cause, the evidence, and the unknowns
+   evidence(shell): findings.md written
+metrics: {"rounds": 2, "handoffs": 4, "protocol_violations": 0, ...}
+  - wrote_findings: FAIL
+```
+
+Note the ending. The exchange is clean — four handoffs, zero violations, a proper final report — and it is graded **FAIL**, because the engineer's evidence says `findings.md written` and no such file exists. The transcript is a claim; the environment is the evidence. The same rule that governs one agent governs two, and a tidy conversation buys no exemption from it.
+
+`--researcher-provider` and `--engineer-provider` are independent, so either seat can be any provider. `mock-role` is a fixture that follows a fixed script and does no reasoning — never read its runs as evidence about agent behaviour.
+
+**Experiments run in the workspace, through the same guardrails.** The disagreement ladder's middle rung needs something to execute the discriminating experiment; `experiments/runner.py` binds that to the task's own workspace and the task's own ToolRegistry. Two agents wanting to check something is not a reason to hand them a wider shell than the task gets — a `sudo` in an experiment is refused exactly as it would be in a tool call.
+
 ---
 
 ## Writing a task
@@ -365,6 +391,16 @@ Prefer outcome graders over route graders. Specify *"the failing test now passes
 ### About the two bugfix tasks
 
 `fix_divide_bug` spells the edit out (*"replace `return 0` with `raise ValueError(...)`"*) so the rule-based mock provider can complete it. That is a **smoke test**, not a model evaluation — it exists so the loop is demonstrable with no API key. `fix_divide_bug_unguided` is the honest version and the mock fails it. Real capability tasks should look like the second one.
+
+### Closing the flywheel
+
+```bash
+agentwb regression-from-failure <run_id> --tasks tasks
+```
+
+Spec §19's loop is *failure → diagnose → fix → verify → regression task*, and the last step is the one that usually goes missing. A fixed bug with no test can come back silently, and the failure data you already paid for is the cheapest possible source of a task that would catch it.
+
+The generated task reuses the original environment and graders, is tagged `regression` so `agentwb regress` picks it up, and records what it came from — the trajectory id, the failure categories, and the analyzer's suggested check. It is written with a note telling you to review the graders first: a task auto-derived from one failure is a starting point for a regression bar, not a regression bar.
 
 ---
 
@@ -419,5 +455,4 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **DSPy and GEPA adapters are untested against the real libraries.** The interface and the missing-dependency path are covered; the code paths that call into an installed `gepa` or `dspy` are not, because neither is installed here.
 - **No real statistical confidence.** The gate warns below a trial threshold using a crude binomial spread, not a confidence interval.
 - **Disagreement detection is lexical.** It compares claim wording, not meaning, so two agents saying the same thing very differently may register as a conflict. A false positive costs one cheap experiment; the alternative — missing a real conflict — lets both agents proceed on incompatible beliefs.
-- **Multi-agent has no CLI entry point yet.** `Orchestrator` is usable from Python and fully tested; `agentwb multi-agent <task>` is not wired up.
 - **Retrieval is off by default.** It only helps once the store has history from *other* tasks; on an empty store it correctly returns nothing.
