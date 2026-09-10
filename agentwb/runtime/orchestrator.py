@@ -115,7 +115,55 @@ class Exchange:
             "duplicate_work": self.duplicate_work,
             "evidence_items": sum(len(m.evidence) for m in self.messages),
             "blockers": sum(1 for m in self.messages if m.type is MessageType.BLOCKER),
+            "ignored_evidence": self._ignored_evidence(),
+            "verification_failures": self._verification_failures(),
         }
+
+    def _ignored_evidence(self) -> int:
+        """Claims restated after a disagreement already ruled against them.
+
+        This is the failure where a conflict is settled by experiment and an
+        agent carries on as though it were not -- the expensive one, because
+        the exchange looks like it is progressing while one side is arguing
+        against a result already on the table.
+        """
+        losers: list[str] = []
+        for record in self.disagreements:
+            outcome = record.get("outcome", record)
+            if not str(outcome.get("resolution", "")).startswith("RESOLVED"):
+                continue
+            winner_id = outcome.get("winner")
+            pair = [record.get("a"), record.get("b")]
+            for message_id in pair:
+                if message_id and message_id != winner_id:
+                    losers.append(message_id)
+
+        losing_claims = {_normalise(m.claim) for m in self.messages
+                         if m.message_id in losers and m.claim}
+        if not losing_claims:
+            return 0
+
+        # Only messages sent after the ruling can ignore it.
+        resolved_after = False
+        count = 0
+        for m in self.messages:
+            if m.message_id in losers:
+                resolved_after = True
+                continue
+            if resolved_after and _normalise(m.claim) in losing_claims:
+                count += 1
+        return count
+
+    def _verification_failures(self) -> int:
+        """Closing claims with nothing observed behind them.
+
+        A FINAL_REPORT is the one message that asserts the work is done. One
+        carrying no evidence is the multi-agent form of the single-agent
+        failure this whole system exists to catch: a conclusion asserted rather
+        than shown.
+        """
+        return sum(1 for m in self.messages
+                   if m.type is MessageType.FINAL_REPORT and not m.evidence)
 
     @property
     def final_report(self) -> Optional[AgentMessage]:

@@ -76,6 +76,8 @@ primary evidence  >  environment outcome  >  tests  >  predefined metric  >  jud
 | `compare <base> <cand>` | Config + metric diff, with confound detection. |
 | `failures [--last N]` | Recorded failures and their category counts. |
 | `analyze <run_id>` | Why a run failed: root causes, critical step, proposed fix, suggested regression test. `--all-failures` for a sweep. |
+| `report <run_id>` | Write-up of a run: what was attempted, what the environment says, what is still unverified, what to do next. |
+| `retrieve "<query>"` | Search recorded experience by description. |
 | `prompts` | Registered prompt versions and their lineage. |
 | `regress [--tasks dir]` | Run every task tagged `regression`. |
 | `annotate <run_id>` | Attach a human correction (verdict, reclassification, note). |
@@ -481,6 +483,7 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **`shell` guardrails are a backstop, not a sandbox.** They stop an agent that wanders, not one that is adversarial. For untrusted tasks, run the workbench inside a real container.
 - **Failure classification is rule-based** — cheap, reproducible, auditable, and shallow. The V1 analysis agent proposes root causes on top; its output is a hypothesis, not ground truth.
 - **No statistical confidence yet.** `compare` warns about single-trial noise but does not compute intervals. Raise `--trials` and read the success rate.
+- **`report` draws only on recorded facts.** Where nothing was recorded it says so rather than filling the section, and its "still unverified" list is never empty -- a run claiming to have verified everything is the one worth doubting.
 - **Only one real-model run so far**, and it was driven by hand. The Anthropic and OpenAI adapters have still never made a live API call; their translation layers are unexercised.
 - **The RuleProvider is a fixture, not a model.** It does no reasoning, and it cannot do the research task at all. Never quote its scores as agent performance.
 - **Judges are unvalidated against human labels.** They are graders, not truth. Use `annotate` to record human verdicts, and check whether the judge agrees before you trust a dimension. *Who validates the validators* is a real question and V0 does not answer it.

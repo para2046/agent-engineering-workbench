@@ -371,6 +371,194 @@ def cmd_prompts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """A run write-up, structured the way spec section 34 asks for.
+
+    `inspect` shows the mechanics -- every tool call, every observation.
+    A report answers the questions someone who did not watch the run has:
+    what was attempted, what the environment says about it, what is still
+    unverified, and what to do next. It draws only on recorded facts; where
+    there is nothing recorded it says so rather than filling the section.
+    """
+    ctx = Ctx(args)
+    run_id = ctx.store.resolve(args.run_id)
+    traj = ctx.store.load(run_id)
+    ev = traj.evaluation
+    analysis = failure_analyzer.load(ctx.store.run_dir(run_id))
+
+    tool_steps = [s for s in traj.steps if (s.action or {}).get("type") == "tool_call"]
+    tools_used: list[str] = []
+    for step in tool_steps:
+        name = (step.action or {}).get("tool")
+        if name and name not in tools_used:
+            tools_used.append(name)
+    # A tool *error* carries an error code. run_tests returning a red suite is
+    # ok=False with no code -- a legitimate observation, not a malfunction, and
+    # counting it as one would overstate how badly the run went.
+    errored = [s for s in tool_steps if (s.tool_result or {}).get("error")]
+    red_results = [s for s in tool_steps
+                   if not (s.tool_result or {}).get("ok", True)
+                   and not (s.tool_result or {}).get("error")]
+
+    payload = {
+        "run": run_id,
+        "task": traj.task_id,
+        "verdict": "PASS" if (ev and ev.passed) else "FAIL",
+        "score": ev.score if ev else None,
+        "provider": f"{traj.provider}/{traj.model}",
+        "prompt_version": traj.prompt_version,
+        "termination": traj.termination_reason,
+        "tools_used": tools_used,
+        "tool_errors": len(errored),
+        "negative_observations": len(red_results),
+        "graders": [{"grader": r.grader, "verdict": r.verdict.value,
+                     "required": r.required, "error": r.error}
+                    for r in (ev.results if ev else [])],
+        "unverified": _unverified(traj, ev),
+        "failure_categories": traj.failure_categories,
+        "analysis": analysis.to_dict() if analysis else None,
+        "metrics": traj.metrics,
+        "retrieval": traj.retrieval or None,
+    }
+    if ctx.json:
+        print(json.dumps(payload, indent=2, default=str))
+        return 0 if (ev and ev.passed) else 1
+
+    mark = _verdict_mark(payload["verdict"])
+    print(f"{_c(BOLD, 'REPORT')} {run_id}")
+    print(f"  task {traj.task_id}  ->  [{mark}] score={payload['score']}")
+    print(f"  {traj.provider}/{traj.model}   prompt={traj.prompt_version}   "
+          f"termination={traj.termination_reason}")
+
+    print(f"\n{_c(BOLD, 'What was attempted')}")
+    print(f"  {len(tool_steps)} tool call(s) across {len(traj.steps)} step(s): "
+          f"{', '.join(tools_used) or 'none'}")
+    if errored:
+        codes = sorted({(s.tool_result or {}).get("error") for s in errored})
+        print(f"  {len(errored)} tool error(s): {', '.join(codes)}")
+    if red_results:
+        print(f"  {len(red_results)} tool call(s) reported a negative result "
+              f"{_c(DIM, '(an observation, not a malfunction)')}")
+
+    print(f"\n{_c(BOLD, 'What the environment says')}")
+    if not ev:
+        print(f"  {_c(YELLOW, 'ungraded')} -- no evaluation was recorded")
+    else:
+        for r in ev.results:
+            flag = "" if r.required else _c(DIM, " [advisory]")
+            extra = f"   ({r.error})" if r.error else ""
+            print(f"  {_verdict_mark(r.verdict.value):<8} {r.grader}{flag}{extra}")
+        if ev.notes:
+            print(f"  {_c(YELLOW, ev.notes)}")
+
+    print(f"\n{_c(BOLD, 'What is still unverified')}")
+    for line in payload["unverified"]:
+        print(f"  - {line}")
+
+    if traj.retrieval and traj.retrieval.get("retrieved"):
+        print(f"\n{_c(BOLD, 'Past experience shown to the agent')}")
+        for item in traj.retrieval["retrieved"]:
+            print(f"  - {item['task_id']} ({item['outcome']}, score {item['score']})")
+
+    print(f"\n{_c(BOLD, 'Recommended next step')}")
+    if ev and ev.passed:
+        print("  keep it: convert this into a regression task so it cannot silently break")
+        print(f"  {_c(DIM, f'agentwb regression-from-failure {run_id[:20]}... (or add the task by hand)')}")
+    elif analysis:
+        print(f"  {analysis.proposed_fix or 'inspect the transcript; no fix was proposed'}")
+        if analysis.recommended_regression_test:
+            print(f"  {_c(DIM, 'regression test: ' + analysis.recommended_regression_test)}")
+        print(f"  {_c(DIM, 'the analysis is a hypothesis, not a verdict')}")
+    else:
+        print(f"  run `agentwb analyze {run_id}` for a root-cause hypothesis")
+    return 0 if (ev and ev.passed) else 1
+
+
+def _unverified(traj, ev) -> list[str]:
+    """Everything the run did not establish. Never empty -- a run that claims
+    to have verified everything is the claim most worth doubting."""
+    out: list[str] = []
+    for r in (ev.results if ev else []):
+        if r.verdict is GraderVerdict.UNKNOWN:
+            out.append(f"{r.grader} returned UNKNOWN: {r.error or 'insufficient evidence'}")
+    if not any((s.action or {}).get("tool") == "run_tests" for s in traj.steps):
+        out.append("the agent never ran the test suite itself")
+    if ev and any(r.evidence and r.evidence[0].get("source") == "judge" for r in ev.results):
+        out.append("model-judged dimensions are unvalidated against human labels")
+    if not ev:
+        out.append("nothing was graded, so nothing about this run is established")
+    if ev and not ev.passed:
+        failing = [r.grader for r in ev.results
+                   if r.required and r.verdict is not GraderVerdict.PASS]
+        if failing:
+            out.append(f"the failure itself is established, not unverified: "
+                       f"{', '.join(failing)} checked the environment and found it wrong")
+    if not out:
+        out.append("no gaps detected by the recorded checks -- which is not the same "
+                   "as none existing")
+    return out
+
+
+def cmd_retrieve(args: argparse.Namespace) -> int:
+    """Search recorded experience by description.
+
+    The same scorer the agent's own retrieval uses, exposed so a person can ask
+    "have we hit this before?" without opening JSONL by hand.
+
+    Unlike agent-facing retrieval there is no same-task exclusion here: a person
+    asking about a task they are debugging *wants* its history. The exclusion
+    exists to stop an agent being handed the answer, and a human reading their
+    own logs is not that.
+    """
+    from ..experience.retrieval import _similarity, _terms
+
+    ctx = Ctx(args)
+    query = _terms(args.query)
+    if not query:
+        print("query had no searchable terms after stopword removal", file=sys.stderr)
+        return 2
+
+    scored = []
+    for entry in ctx.experience.iter_experiences():
+        task = entry.get("task") or {}
+        terms = _terms(f"{task.get('prompt', '')} {' '.join(task.get('tags') or [])}")
+        score = _similarity(query, terms)
+        if score > 0:
+            scored.append((score, entry))
+    scored.sort(key=lambda pair: -pair[0])
+    scored = scored[: args.limit]
+
+    if ctx.json:
+        print(json.dumps([{"score": round(s, 4), **e} for s, e in scored],
+                         indent=2, default=str))
+        return 0
+
+    if not scored:
+        print(f"nothing recorded matches {args.query!r}")
+        return 0
+
+    print(f"{_c(BOLD, f'{len(scored)} match(es)')} for {args.query!r}\n")
+    for score, entry in scored:
+        task = entry.get("task") or {}
+        outcome = entry.get("outcome", "?")
+        mark = _verdict_mark("PASS" if outcome == "PASS" else "FAIL")
+        cats = ", ".join(entry.get("failure_categories") or [])
+        print(f"  [{mark}] {_c(BOLD, task.get('id', '?'))}  "
+              f"{_c(DIM, f'similarity {score:.2f}')}  {entry.get('trajectory_id', '')}")
+        print(f"      {(task.get('prompt') or '').splitlines()[0][:120]}")
+        if cats:
+            print(f"      {_c(YELLOW, cats)}")
+        tools = [a.get("tool") for a in (entry.get("actions") or [])]
+        if tools:
+            seen, order = set(), []
+            for t in tools:
+                if t and t not in seen:
+                    seen.add(t)
+                    order.append(t)
+            print(f"      {_c(DIM, 'approach: ' + ' -> '.join(order[:8]))}")
+    return 0
+
+
 def cmd_multi_agent(args: argparse.Namespace) -> int:
     """Run a task through the two-agent protocol, in a real workspace.
 
@@ -831,6 +1019,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", help="task id for the new regression task")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_regress_from_failure)
+
+    sp = sub.add_parser("report", help="write-up of a run: attempt, evidence, gaps, next step")
+    sp.add_argument("run_id")
+    sp.set_defaults(func=cmd_report)
+
+    sp = sub.add_parser("retrieve", help="search recorded experience by description")
+    sp.add_argument("query")
+    sp.add_argument("--limit", type=int, default=10)
+    sp.set_defaults(func=cmd_retrieve)
 
     sp = sub.add_parser("splits", help="show train/dev/test/regression assignment")
     sp.add_argument("--tasks", default="tasks")
