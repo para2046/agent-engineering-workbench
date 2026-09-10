@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -53,6 +54,12 @@ class TrajectoryStore:
         self.runs_root.mkdir(parents=True, exist_ok=True)
         self.db_path = self.root / "index.sqlite3"
         self._db: Optional[sqlite3.Connection] = None
+        # Trials can run concurrently, and by default a sqlite3 connection
+        # refuses use from any thread but its creator. The index is a
+        # write-light side-car -- one row per finished run -- so a single
+        # connection guarded by a lock is simpler and less surprising than
+        # per-thread connections, and SQLite serialises writers anyway.
+        self._lock = threading.Lock()
         self._init_db()
 
     # -- paths ------------------------------------------------------------
@@ -66,18 +73,20 @@ class TrajectoryStore:
     @property
     def db(self) -> sqlite3.Connection:
         if self._db is None:
-            self._db = sqlite3.connect(self.db_path)
+            self._db = sqlite3.connect(self.db_path, check_same_thread=False)
             self._db.row_factory = sqlite3.Row
         return self._db
 
     def _init_db(self) -> None:
-        self.db.executescript(SCHEMA)
-        self.db.commit()
+        with self._lock:
+            self.db.executescript(SCHEMA)
+            self.db.commit()
 
     def close(self) -> None:
-        if self._db is not None:
-            self._db.close()
-            self._db = None
+        with self._lock:
+            if self._db is not None:
+                self._db.close()
+                self._db = None
 
     # -- writing ----------------------------------------------------------
     def write(self, traj: Trajectory) -> Path:
@@ -90,6 +99,10 @@ class TrajectoryStore:
         return path
 
     def _index(self, traj: Trajectory, path: Path) -> None:
+        with self._lock:
+            self._index_locked(traj, path)
+
+    def _index_locked(self, traj: Trajectory, path: Path) -> None:
         ev = traj.evaluation
         m = traj.metrics or {}
         self.db.execute(
@@ -133,7 +146,8 @@ class TrajectoryStore:
         if where:
             sql += f" WHERE {where}"
         sql += " ORDER BY started_at DESC LIMIT ?"
-        rows = self.db.execute(sql, (*params, limit)).fetchall()
+        with self._lock:
+            rows = self.db.execute(sql, (*params, limit)).fetchall()
         return [dict(r) for r in rows]
 
     def iter_docs(self) -> Iterator[Trajectory]:
@@ -147,10 +161,10 @@ class TrajectoryStore:
 
     def reindex(self) -> int:
         """Rebuild the SQLite index from JSONL/JSON documents on disk."""
-        self.db.execute("DELETE FROM runs")
-        n = 0
-        for traj in self.iter_docs():
-            self._index(traj, self.doc_path(traj.trajectory_id))
-            n += 1
-        self.db.commit()
-        return n
+        docs = list(self.iter_docs())
+        with self._lock:
+            self.db.execute("DELETE FROM runs")
+            for traj in docs:
+                self._index_locked(traj, self.doc_path(traj.trajectory_id))
+            self.db.commit()
+        return len(docs)

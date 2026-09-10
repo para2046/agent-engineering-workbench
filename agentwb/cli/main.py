@@ -111,7 +111,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     results = []
     for task in tasks:
         result = ctx.harness.run_task(task, provider, trials=args.trials,
-                                      tool_timeout=args.timeout)
+                                      tool_timeout=args.timeout,
+                                      concurrency=getattr(args, 'concurrency', 1) or 1)
         results.append(result)
         for tr in result.trials:
             _print_trial(ctx, tr.trajectory)
@@ -369,6 +370,94 @@ def cmd_prompts(args: argparse.Namespace) -> int:
         print(f"  {_c(BOLD, pid)}{parent}")
         print(f"      {_c(DIM, first)}")
     return 0
+
+
+def cmd_cluster(args: argparse.Namespace) -> int:
+    """Group recorded failures by signature.
+
+    Fifty failures are rarely fifty problems. Clustering shows which few they
+    actually are, and how concentrated -- thirty failures in two clusters is a
+    very different morning from thirty in twenty-eight.
+    """
+    from ..experience.failure_cluster import cluster, summarize
+
+    ctx = Ctx(args)
+    clusters = cluster(ctx.experience.iter_experiences())
+    stats = summarize(clusters)
+
+    if ctx.json:
+        print(json.dumps({"summary": stats,
+                          "clusters": [c.to_dict() for c in clusters]},
+                         indent=2, default=str))
+        return 0
+
+    if not clusters:
+        print("no failures recorded")
+        return 0
+
+    concentration = stats["concentration"]
+    print(f"{_c(BOLD, str(stats['failures']))} failure(s) in "
+          f"{_c(BOLD, str(stats['clusters']))} cluster(s)  "
+          + _c(DIM, f"concentration {concentration}"))
+    print()
+    for c in clusters[: args.limit]:
+        scope = _c(YELLOW, "spans tasks") if c.spans_tasks else _c(DIM, "single task")
+        print(f"  {_c(BOLD, f'x{c.size}')}  {c.signature.describe()}   [{scope}]")
+        print(f"      tasks: {', '.join(c.task_ids)}")
+        example = c.example()
+        if example:
+            print(f"      {_c(DIM, 'example: ' + example.get('trajectory_id', ''))}")
+    if stats["cross_task_clusters"]:
+        print(f"\n  {_c(YELLOW, 'note')}: {stats['cross_task_clusters']} cluster(s) span "
+              f"more than one task -- those point at the agent or the tools rather "
+              f"than at any single task")
+    return 0
+
+
+def cmd_adversarial(args: argparse.Namespace) -> int:
+    """Search for harder variants of a task that break the agent.
+
+    Only variants that remain solvable count as findings; breaking an agent
+    with an impossible task teaches nothing and would poison the suite.
+    """
+    from ..adversarial.search import Mutation, search
+
+    ctx = Ctx(args)
+    tasks = load_tasks(Path(args.task))
+    if not tasks:
+        print(f"no task files found at {args.task}", file=sys.stderr)
+        return 2
+    provider = ctx.provider(args)
+
+    selected = None
+    if args.mutation:
+        try:
+            selected = [Mutation(m.upper()) for m in args.mutation]
+        except ValueError as exc:
+            print(f"unknown mutation: {exc}", file=sys.stderr)
+            return 2
+
+    def run_variant(task) -> bool:
+        result = ctx.harness.run_task(task, provider, trials=args.trials,
+                                      concurrency=args.concurrency)
+        return result.pass_count == len(result.trials)
+
+    exit_code = 0
+    for task in tasks:
+        result = search(task, run=run_variant, mutations=selected)
+        if ctx.json:
+            print(json.dumps(result.to_dict(), indent=2, default=str))
+        else:
+            print(f"{_c(BOLD, task.id)}: {result.summary()}")
+            for v in result.variants:
+                mark = _c(RED, "BROKE") if v.broke_the_agent else _c(GREEN, "held")
+                print(f"  [{mark}] {v.mutation.value}")
+                print(f"      {_c(DIM, v.rationale)}")
+            for note in result.notes[:1]:
+                print(f"  {_c(YELLOW, 'note')}: {note}")
+        if result.findings:
+            exit_code = 1
+    return exit_code
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -919,6 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--trials", type=int, help="override trial count")
     sp.add_argument("--timeout", type=int, default=60, help="per-tool timeout in seconds")
     sp.add_argument("--no-analysis", action="store_true", help="skip failure analysis")
+    sp.add_argument("--concurrency", type=int, default=1,
+                    help="run trials in parallel (provider-latency bound)")
     add_provider_flags(sp)
     add_judge_flags(sp)
     add_retrieval_flags(sp)
@@ -1019,6 +1110,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", help="task id for the new regression task")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_regress_from_failure)
+
+    sp = sub.add_parser("cluster", help="group recorded failures by signature")
+    sp.add_argument("--limit", type=int, default=10)
+    sp.set_defaults(func=cmd_cluster)
+
+    sp = sub.add_parser("adversarial",
+                        help="search for harder variants of a task that break the agent")
+    sp.add_argument("task")
+    sp.add_argument("--mutation", action="append",
+                    help="restrict to named mutations (repeatable)")
+    sp.add_argument("--trials", type=int, default=1)
+    sp.add_argument("--concurrency", type=int, default=1)
+    sp.add_argument("--no-analysis", action="store_true")
+    add_provider_flags(sp)
+    add_judge_flags(sp)
+    sp.set_defaults(func=cmd_adversarial)
 
     sp = sub.add_parser("report", help="write-up of a run: attempt, evidence, gaps, next step")
     sp.add_argument("run_id")

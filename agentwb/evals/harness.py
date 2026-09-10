@@ -103,13 +103,53 @@ class Harness:
         trials: Optional[int] = None,
         tool_timeout: int = 60,
         policy=None,
+        concurrency: int = 1,
     ) -> TaskResult:
         """``policy`` overrides the system prompt for this run -- how a candidate
         policy is evaluated without touching the live one."""
-        n = trials if trials is not None else task.trials
+        n = max(1, trials if trials is not None else task.trials)
         result = TaskResult(task_id=task.id)
-        for trial in range(max(1, n)):
-            result.trials.append(self._run_one(task, provider, trial, tool_timeout, policy))
+
+        if concurrency <= 1 or n == 1:
+            for trial in range(n):
+                result.trials.append(
+                    self._run_one(task, provider, trial, tool_timeout, policy))
+            return result
+
+        # A provider carrying per-run state cannot be shared across threads.
+        # Real adapters are stateless between calls and do not implement reset();
+        # the fixtures do, and four threads sharing one would interleave its
+        # state machine and silently produce wrong results -- 0/4 passing where
+        # serial gives 4/4. Refusing loudly is the only safe option: a quietly
+        # wrong success rate is worse than no parallelism.
+        if callable(getattr(provider, "reset", None)):
+            raise ValueError(
+                f"{type(provider).__name__} keeps per-run state (it implements "
+                f"reset()), so it cannot be shared across concurrent trials -- the "
+                f"trials would corrupt each other's state and report wrong results. "
+                f"Run with --concurrency 1, or use a stateless provider."
+            )
+
+        # Trials are independent -- separate workspaces, separate run ids -- and
+        # dominated by provider latency, so they parallelise cleanly. Threads
+        # rather than asyncio: the provider SDKs are synchronous, and this keeps
+        # the whole codebase dependency-free and debuggable.
+        #
+        # Results are re-sorted by trial index afterwards: completion order is
+        # nondeterministic, and a trial list that reshuffles between runs would
+        # make `compare` output impossible to diff.
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(concurrency, n)) as pool:
+            futures = {
+                pool.submit(self._run_one, task, provider, trial, tool_timeout, policy): trial
+                for trial in range(n)
+            }
+            done: list[tuple[int, TrialResult]] = []
+            for future, trial in futures.items():
+                done.append((trial, future.result()))
+
+        result.trials = [tr for _, tr in sorted(done, key=lambda pair: pair[0])]
         return result
 
     def _run_one(self, task: Task, provider: ModelProvider, trial: int, tool_timeout: int,

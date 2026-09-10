@@ -9,7 +9,7 @@ TASK → AGENT → ACTION → ENVIRONMENT → OBSERVATION → TRAJECTORY
      → OUTCOME → EVALUATION → FAILURE ANALYSIS → EXPERIENCE STORE ↺
 ```
 
-**Status: V3 complete.** A single agent that runs, logs every trajectory, is graded deterministically and by rubric judges, has its failures analysed, retrieves relevant past experience, and can have its policy optimized behind a promotion gate. Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
+**Status: complete.** Every section of the spec is built. A single agent that runs, logs every trajectory, is graded deterministically and by rubric judges, has its failures analysed, retrieves relevant past experience, and can have its policy optimized behind a promotion gate. Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
 
 ---
 
@@ -78,6 +78,8 @@ primary evidence  >  environment outcome  >  tests  >  predefined metric  >  jud
 | `analyze <run_id>` | Why a run failed: root causes, critical step, proposed fix, suggested regression test. `--all-failures` for a sweep. |
 | `report <run_id>` | Write-up of a run: what was attempted, what the environment says, what is still unverified, what to do next. |
 | `retrieve "<query>"` | Search recorded experience by description. |
+| `cluster` | Group recorded failures by signature. |
+| `adversarial <task>` | Search for harder variants that break the agent. |
 | `prompts` | Registered prompt versions and their lineage. |
 | `regress [--tasks dir]` | Run every task tagged `regression`. |
 | `annotate <run_id>` | Attach a human correction (verdict, reclassification, note). |
@@ -390,6 +392,47 @@ The claim was fluent and completely false, and it cost nothing to reject, becaus
 
 One caveat worth keeping attached to any session run: an assistant driving the tool it wrote is not an independent evaluator. What stays trustworthy is the grading, which is deterministic and re-executed. The answers are the driver's; the verdict is not.
 
+### Finding failures instead of waiting for them
+
+```bash
+agentwb adversarial tasks/fix_divide_bug.json     # hunt for harder variants
+agentwb cluster                                   # group what failed, by signature
+```
+
+**Adversarial search** mutates a passing task into harder variants — distractor files, ambiguous edit anchors, misleading names, a prompt that stops naming the symptom, a halved step budget — runs them, and keeps the ones that break the agent.
+
+The rule that makes it useful: **a variant must stay solvable.** Breaking an agent is trivial if you may delete the file it needs. Those failures teach nothing and poison the regression suite with tasks that can never go green. So every mutation preserves the success criteria and the graders and changes only the *route*. A finding then means "the agent could have solved this and didn't."
+
+On the bundled task it found two: `DUPLICATE_ANCHOR` (a second `return 0` makes a naive edit anchor ambiguous) and `WEAKEN_PROMPT` (the prompt no longer names the symptom).
+
+**Clustering** answers the question a flat failure list hides: fifty failures are rarely fifty problems. Grouping is on a *signature* — categories, termination reason, tool error codes, whether anything was verified or changed — not on similarity, so it under-clusters rather than merging two real bugs into one.
+
+```
+4 failure(s) in 3 cluster(s)  concentration 0.5
+  x2  INCORRECT_VERIFICATION; changed nothing   [spans tasks]
+      tasks: fix_divide_bug_unguided, fix_divide_bug__weaken_prompt
+```
+
+A cluster spanning tasks points at the agent or the tools; one confined to a single task usually points at that task. Here it caught the same weakness twice under two different names.
+
+### Research mode
+
+```python
+investigate(question, judge, run_experiment=..., max_rounds=3)
+```
+
+Question → competing hypotheses → **rank** → discriminating experiment → belief update.
+
+Hypotheses are ranked by **evidence, never by stated confidence**. A model asked how sure it is answers fluently, and the number tracks how good the sentence sounded — rank on it and the best-written hypothesis wins, which is how a research loop converges confidently on the wrong thing. The score is built from countable facts: distinct observations, whether they came from the environment or from another claim, whether the hypothesis names what would refute it, whether it admits its unknowns. Confidence is a small tie-breaker, and confidence outrunning evidence is *penalised*.
+
+Belief updates require new evidence. A round that gathered nothing cannot change the ranking, however much re-reasoning happened.
+
+### Concurrent trials
+
+`--concurrency N` runs trials in parallel — they are independent and provider-latency bound, so it scales well (3× on four trials locally).
+
+It **refuses** a provider that carries per-run state. Sharing one across threads produced 0/4 passing where serial gave 4/4; a quietly wrong success rate is worse than no parallelism, so it raises instead. Real adapters are stateless and unaffected.
+
 ---
 
 ## Writing a task
@@ -468,15 +511,15 @@ Failure data is never deleted because a later version succeeded. The failures ar
 | **V1** | **experience retrieval** — small diverse sets, provenance tracked, contamination refused; **OpenAI adapter** | **done** |
 | **V2** | **optimization** — splits, cost metric, promotion gate, reflective optimizer with an invariant guard, optional DSPy/GEPA adapters | **done** |
 | **V3** | **multi-agent protocol** — typed messages, role remits, disagreement resolved by discriminative experiment, bounded rounds | **done** |
-| V4 | adversarial search for difficult failure cases | next |
+| **V4** | **adversarial search**, research mode, failure clustering, concurrent trials | **done** |
 
 Also deferred from V0 by choice, both small: a richer transcript viewer (diffs, side-by-side trials) and a one-command `failure → regression task` conversion.
 
 Every version stays runnable. Do not start a phase because the previous one compiles — start it because there is evidence the previous milestone works.
 
-### Deliberately not built yet
+### Deliberately not built
 
-Multi-agent orchestration, GEPA, a vector database, distributed anything. Each is in the spec for a later version; none is needed to answer *"did that change help?"*, which is the only question V0 exists to answer.
+A vector database (lexical retrieval is adequate at this volume and can explain itself), and distributed anything. Both are in the spec's "avoid" list until the volume justifies them.
 
 ### Known limits of V0
 
