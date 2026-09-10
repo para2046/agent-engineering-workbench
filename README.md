@@ -9,7 +9,7 @@ TASK → AGENT → ACTION → ENVIRONMENT → OBSERVATION → TRAJECTORY
      → OUTCOME → EVALUATION → FAILURE ANALYSIS → EXPERIENCE STORE ↺
 ```
 
-**Status: V2 complete.** A single agent that runs, logs every trajectory, is graded deterministically and by rubric judges, has its failures analysed, retrieves relevant past experience, and can have its policy optimized behind a promotion gate. Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
+**Status: V3 complete.** A single agent that runs, logs every trajectory, is graded deterministically and by rubric judges, has its failures analysed, retrieves relevant past experience, and can have its policy optimized behind a promotion gate. Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
 
 ---
 
@@ -133,6 +133,12 @@ agentwb/
     promotion.py        the gate an optimized policy must clear before replacing anything
     gepa_optimizer.py   optional GEPA adapter
     dspy_optimizer.py   optional DSPy adapter
+
+  protocols/
+    schemas.py          typed artifacts; a claim must say how it could be wrong
+    disagreement.py     resolved by experiment, never by vote
+    researcher_engineer.py  role remits -- who may send what
+  runtime/orchestrator.py   bounded rounds; a round must be earned
 
   experience/
     store.py            (situation, action, observation, outcome, evaluation, correction)
@@ -306,6 +312,23 @@ That candidate would have scored 40/40 against a baseline of 10/40. It never got
 
 Two optional adapters, `gepa` and `dspy`, plug real libraries into the same interface. Neither gets more trust than a hand-written candidate: both are screened by the same guard and must clear the same gate. DSPy in particular refuses to run without an explicit metric rather than inventing one.
 
+### Multi-agent, and why it is not a conversation
+
+```bash
+# two seats, either provider in either seat
+Orchestrator({"researcher": client_a, "engineer": client_b}, max_rounds=4)
+```
+
+Free-form chat between two capable models produces fluent agreement, drifts off task, and leaves nothing auditable. Three mechanisms prevent that:
+
+**Typed artifacts.** Every turn is one schema-valid message or it does not count. A `HYPOTHESIS` must carry a `verification` with `expected_if_correct` **and** `expected_if_wrong` — a claim whose author cannot say what would distinguish it from its negation is a preference, not a hypothesis. Naming the discriminating observation *before* anyone knows who wins is what makes disagreement resolvable later.
+
+**Role remits.** The researcher may not implement; the engineer may not propose experiments. Out-of-remit messages are recorded as `ROLE_VIOLATION` and **never delivered**. Without this, both agents drift into doing the same job and you pay twice for one agent's work while calling it collaboration.
+
+**Disagreement is not a vote.** Nothing counts agents or weighs confidence. The ladder is: existing evidence → a designed experiment run in the real environment → otherwise `HUMAN_REQUIRED`. The judge is never asked *who is right* — only *what observation would tell these apart*, which is checkable. A design whose two predictions match is refused even when the model asserts it discriminates.
+
+**Rounds must be earned.** After each exchange, if nothing new arrived — no fresh evidence, no experiment result, no claim not already on the table — the run stops with `NO_NEW_EVIDENCE`. Agents restating themselves more elaborately is the characteristic multi-agent failure, and it is expensive precisely because it looks like progress.
+
 ---
 
 ## Writing a task
@@ -373,8 +396,8 @@ Failure data is never deleted because a later version succeeded. The failures ar
 | **V0** | single agent, trajectory logging, deterministic eval, LLM-judge graders, failure analysis, prompt versioning, experience store, CLI | **done** |
 | **V1** | **experience retrieval** — small diverse sets, provenance tracked, contamination refused; **OpenAI adapter** | **done** |
 | **V2** | **optimization** — splits, cost metric, promotion gate, reflective optimizer with an invariant guard, optional DSPy/GEPA adapters | **done** |
-| V3 | Claude + OpenAI structured multi-agent protocol, disagreement resolved by discriminative experiment | next |
-| V4 | adversarial search for difficult failure cases | |
+| **V3** | **multi-agent protocol** — typed messages, role remits, disagreement resolved by discriminative experiment, bounded rounds | **done** |
+| V4 | adversarial search for difficult failure cases | next |
 
 Also deferred from V0 by choice, both small: a richer transcript viewer (diffs, side-by-side trials) and a one-command `failure → regression task` conversion.
 
@@ -395,4 +418,6 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **The invariant guard is keyword-based.** It catches a dropped commitment, not a subtly weakened one — a prompt that keeps the word "verify" while undermining it around the edges would pass. It is a floor, not a ceiling; read candidates before promoting them.
 - **DSPy and GEPA adapters are untested against the real libraries.** The interface and the missing-dependency path are covered; the code paths that call into an installed `gepa` or `dspy` are not, because neither is installed here.
 - **No real statistical confidence.** The gate warns below a trial threshold using a crude binomial spread, not a confidence interval.
+- **Disagreement detection is lexical.** It compares claim wording, not meaning, so two agents saying the same thing very differently may register as a conflict. A false positive costs one cheap experiment; the alternative — missing a real conflict — lets both agents proceed on incompatible beliefs.
+- **Multi-agent has no CLI entry point yet.** `Orchestrator` is usable from Python and fully tested; `agentwb multi-agent <task>` is not wired up.
 - **Retrieval is off by default.** It only helps once the store has history from *other* tasks; on an empty store it correctly returns nothing.
