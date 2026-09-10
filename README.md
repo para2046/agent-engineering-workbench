@@ -41,7 +41,7 @@ agentwb run tasks/fix_divide_bug_unguided.json --provider claude --model claude-
 Run the tests:
 
 ```bash
-python -m unittest discover -s tests -t .    # 182 tests, no network
+python -m unittest discover -s tests -t .    # 200 tests, no network
 ```
 
 ---
