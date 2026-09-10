@@ -93,7 +93,7 @@ class ToolRegistry:
         self.register(
             ToolSchema(
                 name="read_file_region",
-                description="Read a numbered line range from a file. Prefer this over reading whole files.",
+                description="Read a numbered line range from a file. Omitting start/end reads from the top; end defaults to start+120. Prefer ranges over whole files.",
                 parameters={
                     "type": "object",
                     "properties": {

@@ -1,0 +1,61 @@
+{
+  "id": "dev_rate_limiter",
+  "tags": [
+    "development",
+    "capability"
+  ],
+  "prompt": "Implement SlidingWindowLimiter in ratelimit.py so the full test suite passes.\n\nThe tests in test_ratelimit.py are the specification -- read them. They encode several behaviours the class name alone does not tell you.\n\nDo not modify the tests.",
+  "success_criteria": "The full suite passes: correct sliding-window semantics, denied requests do not consume slots, expired entries are pruned, and the agent verified this by running the tests itself.",
+  "environment": {
+    "files": {
+      "ratelimit.py": "\"\"\"A per-key sliding-window rate limiter. Implementation pending.\"\"\"\n\n\nclass SlidingWindowLimiter:\n    def __init__(self, limit, window_seconds):\n        raise NotImplementedError\n\n    def allow(self, key, now):\n        \"\"\"True and record the request if `key` has a free slot at time `now`.\"\"\"\n        raise NotImplementedError\n\n    def pending(self, key, now):\n        \"\"\"How many requests for `key` are inside the window at time `now`.\"\"\"\n        raise NotImplementedError\n",
+      "test_ratelimit.py": "import unittest\n\nfrom ratelimit import SlidingWindowLimiter\n\n\nclass TestBasics(unittest.TestCase):\n    def test_allows_up_to_the_limit_in_one_window(self):\n        rl = SlidingWindowLimiter(limit=3, window_seconds=60)\n        t = 1000.0\n        self.assertTrue(rl.allow(\"alice\", now=t))\n        self.assertTrue(rl.allow(\"alice\", now=t + 1))\n        self.assertTrue(rl.allow(\"alice\", now=t + 2))\n        self.assertFalse(rl.allow(\"alice\", now=t + 3))\n\n    def test_keys_are_independent(self):\n        rl = SlidingWindowLimiter(limit=1, window_seconds=60)\n        t = 1000.0\n        self.assertTrue(rl.allow(\"alice\", now=t))\n        self.assertTrue(rl.allow(\"bob\", now=t))\n        self.assertFalse(rl.allow(\"alice\", now=t + 1))\n\n    def test_window_slides_rather_than_resets(self):\n        rl = SlidingWindowLimiter(limit=2, window_seconds=10)\n        t = 1000.0\n        self.assertTrue(rl.allow(\"k\", now=t))        # expires at t+10\n        self.assertTrue(rl.allow(\"k\", now=t + 6))    # expires at t+16\n        self.assertFalse(rl.allow(\"k\", now=t + 9))   # both still inside\n        self.assertTrue(rl.allow(\"k\", now=t + 11))   # first expired, one slot free\n        self.assertFalse(rl.allow(\"k\", now=t + 12))  # t+6 and t+11 still inside\n\n\nclass TestEdgeCases(unittest.TestCase):\n    def test_a_denied_request_does_not_consume_a_slot(self):\n        rl = SlidingWindowLimiter(limit=1, window_seconds=10)\n        t = 1000.0\n        self.assertTrue(rl.allow(\"k\", now=t))\n        for i in range(1, 9):\n            self.assertFalse(rl.allow(\"k\", now=t + i))\n        # if denials consumed slots, the window would never clear\n        self.assertTrue(rl.allow(\"k\", now=t + 10.001))\n\n    def test_boundary_is_exclusive(self):\n        \"\"\"A request exactly window_seconds later is outside the window.\"\"\"\n        rl = SlidingWindowLimiter(limit=1, window_seconds=10)\n        t = 1000.0\n        self.assertTrue(rl.allow(\"k\", now=t))\n        self.assertTrue(rl.allow(\"k\", now=t + 10.0))\n\n    def test_zero_limit_denies_everything(self):\n        rl = SlidingWindowLimiter(limit=0, window_seconds=10)\n        self.assertFalse(rl.allow(\"k\", now=1000.0))\n\n    def test_invalid_construction_raises(self):\n        with self.assertRaises(ValueError):\n            SlidingWindowLimiter(limit=-1, window_seconds=10)\n        with self.assertRaises(ValueError):\n            SlidingWindowLimiter(limit=1, window_seconds=0)\n\n    def test_memory_does_not_grow_with_expired_entries(self):\n        \"\"\"Expired timestamps must be pruned, or a long-lived limiter leaks.\"\"\"\n        rl = SlidingWindowLimiter(limit=5, window_seconds=1)\n        t = 1000.0\n        for i in range(500):\n            rl.allow(\"k\", now=t + i * 2)      # every request in its own window\n        self.assertLessEqual(rl.pending(\"k\", now=t + 999), 1)\n\n    def test_pending_reports_current_window_occupancy(self):\n        rl = SlidingWindowLimiter(limit=3, window_seconds=10)\n        t = 1000.0\n        self.assertEqual(rl.pending(\"k\", now=t), 0)\n        rl.allow(\"k\", now=t)\n        rl.allow(\"k\", now=t + 1)\n        self.assertEqual(rl.pending(\"k\", now=t + 2), 2)\n        self.assertEqual(rl.pending(\"k\", now=t + 11.5), 0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "max_steps": 14,
+  "trials": 1,
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true,
+      "weight": 3.0
+    },
+    {
+      "type": "tool_used",
+      "name": "verified_with_tests",
+      "required": true,
+      "params": {
+        "tool": "run_tests"
+      }
+    },
+    {
+      "type": "no_forbidden_changes",
+      "name": "left_tests_alone",
+      "required": true,
+      "params": {
+        "paths": [
+          "test_ratelimit.py"
+        ]
+      }
+    },
+    {
+      "type": "file_contains",
+      "name": "not_a_stub_anymore",
+      "required": true,
+      "params": {
+        "path": "ratelimit.py",
+        "text": "NotImplementedError",
+        "absent": true
+      }
+    },
+    {
+      "type": "max_steps",
+      "name": "efficiency",
+      "required": false,
+      "params": {
+        "limit": 10
+      }
+    }
+  ]
+}
