@@ -120,7 +120,16 @@ class Harness:
         recorder = TrajectoryRecorder(self.store)
         extra = {}
         if policy is not None:
-            extra = {"system_prompt": policy.text, "prompt_version": policy.id}
+            text = getattr(policy, "text", None)
+            if text is None:
+                # Explicit over AttributeError: every other error in this codebase
+                # tells the caller how to recover, and this one is easy to hit by
+                # passing a prompt string where a prompt object is expected.
+                raise TypeError(
+                    f"policy must expose .text and .id, got {type(policy).__name__} -- "
+                    "pass a VersionedPrompt or a PolicyCandidate, not a raw string"
+                )
+            extra = {"system_prompt": text, "prompt_version": getattr(policy, "id", "")}
         runner = AgentRunner(provider, ws, recorder, raw, tool_timeout=tool_timeout,
                              retriever=self.retriever, prices=self.prices, **extra)
 
