@@ -52,7 +52,10 @@ def bound(
     Long output keeps its head and tail -- for test output and stack traces the
     interesting parts live at both ends, and a middle-elision preserves them.
     """
-    if len(text) <= max_chars and text.count("\n") + 1 <= max_lines:
+    # A little slack: truncating an observation that barely exceeds the
+    # budget costs the agent a whole read_raw turn to recover a few hundred
+    # characters. Elision must buy more than it costs.
+    if len(text) <= max_chars * 1.15 and text.count("\n") + 1 <= max_lines * 1.15:
         return text, False, None
 
     ref = raw.put(text, hint) if raw is not None else None

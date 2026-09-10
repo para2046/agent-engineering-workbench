@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from agentwb.aci.guardrails import GuardrailViolation, check_command, resolve_in_workspace, safe_env
-from agentwb.aci.observations import RawStore, bound
+from agentwb.aci.observations import MAX_CHARS, RawStore, bound
 from agentwb.aci.registry import ToolRegistry, _parse_test_counts
 
 
@@ -167,3 +167,45 @@ class TestRunTests(TempWorkspace):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDogfoodRegressions(TempWorkspace):
+    """Bugs found by the first independent agent to drive the harness."""
+
+    def test_list_files_works_with_a_relative_workspace_root(self):
+        """rglob yields absolute paths; relative_to against an unresolved
+        relative root raised ValueError and the tool was unusable."""
+        import os
+        from agentwb.aci.observations import RawStore
+        from agentwb.aci.registry import ToolRegistry
+
+        rel = Path("data") / "tmp_relws"
+        (rel / "sub").mkdir(parents=True, exist_ok=True)
+        (rel / "sub" / "a.py").write_text("x = 1\n", encoding="utf-8")
+        try:
+            reg = ToolRegistry(rel, RawStore(rel / ".raw"), timeout=10)
+            res = reg.call("list_files", {"path": "."})
+            self.assertTrue(res.ok, res.summary)
+            self.assertIn("sub/a.py", res.summary)
+        finally:
+            import shutil
+            shutil.rmtree(rel, ignore_errors=True)
+
+    def test_write_file_reports_the_on_disk_byte_count(self):
+        res = self.reg.call("write_file", {"path": "n.txt", "content": "a\nb\nc\n"})
+        self.assertTrue(res.ok)
+        self.assertEqual(res.data["bytes"], (self.ws / "n.txt").stat().st_size)
+
+    def test_barely_oversized_output_is_not_truncated(self):
+        """Elision must buy more than the read_raw turn it costs: an agent
+        spent a turn recovering 219 hidden characters."""
+        text = "x" * (MAX_CHARS + 200)      # over budget, within slack
+        shown, truncated, ref = bound(text, self.raw)
+        self.assertFalse(truncated)
+        self.assertEqual(shown, text)
+
+    def test_clearly_oversized_output_is_still_truncated(self):
+        text = "y" * (MAX_CHARS * 2)
+        shown, truncated, ref = bound(text, self.raw)
+        self.assertTrue(truncated)
+        self.assertIsNotNone(ref)

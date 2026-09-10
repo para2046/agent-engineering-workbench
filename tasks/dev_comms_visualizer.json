@@ -1,0 +1,65 @@
+{
+  "id": "dev_comms_visualizer",
+  "tags": [
+    "development",
+    "capability"
+  ],
+  "prompt": "Implement viz.py so the full test suite passes.\n\nIt turns agent-communication logs into a self-contained HTML messageboard. Two input shapes exist -- read the sample files and the tests to learn them:\n- sample_exchange.json: multi-agent (messages between named agents, plus disagreement records)\n- sample_trajectory.json: single agent (its dialogue with the environment: tool calls out, observations back)\n\nThe tests in test_viz.py are the specification. Do not modify them.\n\nStyle the page as a chat messageboard: one bubble per message, alignment or colour per sender, evidence quoted inside the bubble. Inline CSS only -- the file must work offline. Keep it readable in both light and dark viewing.",
+  "success_criteria": "All tests pass: both formats load, every message renders, content is HTML-escaped, senders are visually distinguishable, evidence and disagreement resolutions are shown, and the CLI writes a valid file.",
+  "environment": {
+    "files": {
+      "viz.py": "\"\"\"Messageboard visualizer for workbench communication logs.\n\nRenders two log shapes as one chat-style HTML page:\n- an exchange.json (multi-agent): messages between named agents\n- a trajectory.json (single agent): the conversation with the environment\n\nImplementation pending.\n\"\"\"\n\n\ndef load_records(path):\n    \"\"\"Normalise either log format into a list of message records:\n    {\"sender\", \"recipient\", \"kind\", \"text\", \"round\", \"evidence\": [...]}\"\"\"\n    raise NotImplementedError\n\n\ndef render(records, title):\n    \"\"\"Render records as a self-contained HTML messageboard.\"\"\"\n    raise NotImplementedError\n\n\nif __name__ == \"__main__\":\n    import sys\n    raise NotImplementedError\n",
+      "test_viz.py": "import json\nimport subprocess\nimport sys\nimport unittest\nfrom pathlib import Path\n\nfrom viz import load_records, render\n\n\ndef load(name):\n    return load_records(Path(name))\n\n\nclass TestLoading(unittest.TestCase):\n    def test_exchange_messages_become_records(self):\n        records = load(\"sample_exchange.json\")\n        self.assertEqual(len(records), 3)\n        self.assertEqual(records[1][\"sender\"], \"researcher\")\n        self.assertEqual(records[1][\"recipient\"], \"engineer\")\n        self.assertEqual(records[1][\"kind\"], \"HYPOTHESIS\")\n\n    def test_trajectory_steps_become_records(self):\n        \"\"\"A single-agent run is a conversation with the environment: each tool\n        call is agent -> environment, each observation environment -> agent.\"\"\"\n        records = load(\"sample_trajectory.json\")\n        calls = [r for r in records if r[\"recipient\"] == \"environment\"]\n        replies = [r for r in records if r[\"sender\"] == \"environment\"]\n        self.assertGreaterEqual(len(calls), 2)\n        self.assertGreaterEqual(len(replies), 2)\n        self.assertIn(\"run_tests\", calls[0][\"text\"])\n        self.assertIn(\"FAIL exit=1\", replies[0][\"text\"])\n\n    def test_final_answer_is_a_record(self):\n        records = load(\"sample_trajectory.json\")\n        self.assertTrue(any(\"suite is green\" in r[\"text\"] for r in records))\n\n    def test_unknown_format_raises(self):\n        Path(\"bogus.json\").write_text(json.dumps({\"neither\": True}), encoding=\"utf-8\")\n        with self.assertRaises(ValueError):\n            load(\"bogus.json\")\n\n\nclass TestRendering(unittest.TestCase):\n    def test_every_message_appears(self):\n        html = render(load(\"sample_exchange.json\"), title=\"demo\")\n        self.assertIn(\"Diagnose the latency regression.\", html)\n        self.assertIn(\"wrote findings.md\", html)\n\n    def test_content_is_html_escaped(self):\n        \"\"\"A claim containing markup must not become markup.\"\"\"\n        html = render(load(\"sample_exchange.json\"), title=\"demo\")\n        self.assertNotIn(\"<b>by lookups</b>\", html)\n        self.assertIn(\"&lt;b&gt;by lookups&lt;/b&gt;\", html)\n\n    def test_senders_are_distinguishable(self):\n        html = render(load(\"sample_exchange.json\"), title=\"demo\")\n        self.assertIn('data-sender=\"researcher\"', html)\n        self.assertIn('data-sender=\"engineer\"', html)\n\n    def test_evidence_is_shown_with_its_source(self):\n        html = render(load(\"sample_exchange.json\"), title=\"demo\")\n        self.assertIn(\"pool 100/100\", html)\n        self.assertIn(\"metrics\", html)\n\n    def test_rounds_are_visible(self):\n        html = render(load(\"sample_exchange.json\"), title=\"demo\")\n        self.assertTrue(\"round 1\" in html.lower() or \"r1\" in html.lower())\n\n    def test_disagreement_resolution_is_shown(self):\n        html = render(load(\"sample_exchange.json\"), title=\"demo\")\n        self.assertIn(\"RESOLVED_BY_EVIDENCE\", html)\n\n    def test_has_a_title_tag(self):\n        html = render(load(\"sample_exchange.json\"), title=\"Comms Board\")\n        self.assertIn(\"<title>Comms Board</title>\", html)\n\n    def test_empty_input_renders_a_page_not_a_crash(self):\n        html = render([], title=\"empty\")\n        self.assertIn(\"<html\", html.lower())\n\n\nclass TestCli(unittest.TestCase):\n    def test_cli_writes_the_output_file(self):\n        out = Path(\"out_test.html\")\n        proc = subprocess.run([sys.executable, \"viz.py\", \"sample_exchange.json\",\n                               str(out)], capture_output=True, text=True)\n        self.assertEqual(proc.returncode, 0, proc.stderr)\n        self.assertTrue(out.is_file())\n        self.assertIn(\"researcher\", out.read_text(encoding=\"utf-8\"))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n",
+      "sample_exchange.json": "{\n  \"task_id\": \"demo\",\n  \"termination_reason\": \"SUCCESS\",\n  \"messages\": [\n    {\n      \"sender\": \"orchestrator\",\n      \"recipient\": \"researcher\",\n      \"type\": \"TASK\",\n      \"claim\": \"Diagnose the latency regression.\",\n      \"round\": 0,\n      \"evidence\": []\n    },\n    {\n      \"sender\": \"researcher\",\n      \"recipient\": \"engineer\",\n      \"type\": \"HYPOTHESIS\",\n      \"claim\": \"the pool is exhausted <b>by lookups</b>\",\n      \"round\": 1,\n      \"evidence\": [\n        {\n          \"source\": \"metrics\",\n          \"observation\": \"pool 100/100\"\n        }\n      ],\n      \"confidence\": 0.65,\n      \"unknowns\": [\n        \"why the lookup is slow\"\n      ]\n    },\n    {\n      \"sender\": \"engineer\",\n      \"recipient\": \"researcher\",\n      \"type\": \"FINAL_REPORT\",\n      \"claim\": \"wrote findings.md\",\n      \"round\": 2,\n      \"evidence\": [\n        {\n          \"source\": \"shell\",\n          \"observation\": \"file written\"\n        }\n      ]\n    }\n  ],\n  \"disagreements\": [\n    {\n      \"outcome\": {\n        \"resolution\": \"RESOLVED_BY_EVIDENCE\",\n        \"basis\": \"primary evidence\",\n        \"winning_agent\": \"researcher\"\n      }\n    }\n  ],\n  \"metrics\": {\n    \"rounds\": 2,\n    \"handoffs\": 2\n  }\n}",
+      "sample_trajectory.json": "{\n  \"trajectory_id\": \"run_demo\",\n  \"task_id\": \"fix_bug\",\n  \"termination_reason\": \"AGENT_FINISHED\",\n  \"steps\": [\n    {\n      \"step\": 1,\n      \"action\": {\n        \"type\": \"tool_call\",\n        \"tool\": \"run_tests\",\n        \"arguments\": {}\n      },\n      \"observation\": {\n        \"summary\": \"[unittest] FAIL exit=1 passed=2 failed=1\"\n      },\n      \"tool_result\": {\n        \"ok\": false\n      }\n    },\n    {\n      \"step\": 2,\n      \"action\": {\n        \"type\": \"tool_call\",\n        \"tool\": \"edit_file\",\n        \"arguments\": {\n          \"path\": \"calculator.py\"\n        }\n      },\n      \"observation\": {\n        \"summary\": \"edited calculator.py (1 replacement)\"\n      },\n      \"tool_result\": {\n        \"ok\": true\n      }\n    },\n    {\n      \"step\": 3,\n      \"action\": {\n        \"type\": \"final_answer\"\n      },\n      \"rationale\": \"Fixed the branch; suite is green.\"\n    }\n  ],\n  \"evaluation\": {\n    \"passed\": true,\n    \"score\": 1.0\n  }\n}"
+    }
+  },
+  "max_steps": 16,
+  "trials": 1,
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true,
+      "weight": 3.0
+    },
+    {
+      "type": "tool_used",
+      "name": "verified_with_tests",
+      "required": true,
+      "params": {
+        "tool": "run_tests"
+      }
+    },
+    {
+      "type": "no_forbidden_changes",
+      "name": "left_tests_alone",
+      "required": true,
+      "params": {
+        "paths": [
+          "test_viz.py",
+          "sample_exchange.json",
+          "sample_trajectory.json"
+        ]
+      }
+    },
+    {
+      "type": "file_contains",
+      "name": "not_a_stub",
+      "required": true,
+      "params": {
+        "path": "viz.py",
+        "text": "NotImplementedError",
+        "absent": true
+      }
+    },
+    {
+      "type": "max_steps",
+      "name": "efficiency",
+      "required": false,
+      "params": {
+        "limit": 12
+      }
+    }
+  ]
+}

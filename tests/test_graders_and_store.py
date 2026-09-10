@@ -223,3 +223,56 @@ class TestStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoForbiddenChangesOutcomeFirst(GraderCase):
+    """Regression: an independent agent was failed for READING a protected
+    file (`python viz.py sample_trajectory.json out.html`) because the grader
+    substring-matched shell commands. Mentioning a path is not modifying it."""
+
+    def _ctx(self, protected_content="original\n", on_disk=None, steps=None):
+        from agentwb.types import EnvironmentSpec, Trajectory
+        task = Task(id="t", prompt="p",
+                    environment=EnvironmentSpec(files={"protected.txt": protected_content}))
+        # bytes, not write_text: text mode would translate newlines and
+        # corrupt the CRLF fixture this class exists to test
+        (self.ws / "protected.txt").write_bytes(
+            (protected_content if on_disk is None else on_disk).encode("utf-8"))
+        traj = Trajectory(trajectory_id="r", task_id="t")
+        traj.steps = steps or []
+        return GradingContext(task=task, trajectory=traj, workspace=self.ws)
+
+    def _grade(self, ctx):
+        return run_grader(GraderSpec(type="no_forbidden_changes",
+                                     params={"paths": ["protected.txt"]}), ctx)
+
+    def test_reading_a_protected_file_in_shell_is_not_a_violation(self):
+        steps = [Step(step=1, action={"type": "tool_call", "tool": "shell",
+                                      "arguments": {"command": "python viz.py protected.txt out.html"}})]
+        self.assertIs(self._grade(self._ctx(steps=steps)).verdict, GraderVerdict.PASS)
+
+    def test_an_actual_content_change_is_caught(self):
+        result = self._grade(self._ctx(on_disk="tampered\n"))
+        self.assertIs(result.verdict, GraderVerdict.FAIL)
+        self.assertEqual(result.evidence[0]["violations"][0]["kind"], "content_changed")
+
+    def test_deleting_the_protected_file_is_caught(self):
+        ctx = self._ctx()
+        (self.ws / "protected.txt").unlink()
+        self.assertIs(self._grade(ctx).verdict, GraderVerdict.FAIL)
+
+    def test_newline_differences_are_not_a_change(self):
+        """Windows text-mode materialisation must not read as tampering."""
+        ctx = self._ctx(protected_content="a\nb\n", on_disk="a\r\nb\r\n")
+        self.assertIs(self._grade(ctx).verdict, GraderVerdict.PASS)
+
+    def test_without_an_original_a_shell_write_attempt_is_still_caught(self):
+        from agentwb.types import Trajectory
+        task = Task(id="t", prompt="p")     # nothing seeded
+        traj = Trajectory(trajectory_id="r", task_id="t")
+        traj.steps = [Step(step=1, action={"type": "tool_call", "tool": "shell",
+                                           "arguments": {"command": "echo x > secret.txt"}})]
+        ctx = GradingContext(task=task, trajectory=traj, workspace=self.ws)
+        result = run_grader(GraderSpec(type="no_forbidden_changes",
+                                       params={"paths": ["secret.txt"]}), ctx)
+        self.assertIs(result.verdict, GraderVerdict.FAIL)

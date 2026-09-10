@@ -193,11 +193,18 @@ class ToolRegistry:
         target = resolve_in_workspace(self.workspace, path)
         if not target.is_dir():
             return ToolResult(ok=False, summary=f"not a directory: {path}", error="NOT_A_DIRECTORY")
+        # rglob yields absolute paths (target is resolved), so the base for
+        # relative display must be resolved too. With a relative workspace root
+        # this raised ValueError and the tool was unusable -- found by the
+        # first independent agent to drive the harness, invisible to the test
+        # suite because every test constructed the registry with an absolute
+        # tmpdir.
+        base = self.workspace.resolve()
         entries = []
         for p in sorted(target.rglob("*")):
             if any(part in {"__pycache__", ".git", ".pytest_cache"} for part in p.parts):
                 continue
-            rel = p.relative_to(self.workspace).as_posix()
+            rel = p.relative_to(base).as_posix()
             entries.append(f"{rel}/" if p.is_dir() else f"{rel} ({p.stat().st_size}b)")
             if len(entries) >= 200:
                 entries.append("... [listing capped at 200 entries]")
@@ -236,10 +243,14 @@ class ToolRegistry:
         target.parent.mkdir(parents=True, exist_ok=True)
         existed = target.is_file()
         target.write_text(content, encoding="utf-8")
+        # Report the on-disk size, not len(content): text-mode writes on
+        # Windows translate newlines, and a byte count that disagrees with
+        # the filesystem reads as corruption to a careful agent.
+        on_disk = target.stat().st_size
         return ToolResult(
             ok=True,
-            summary=f"{'overwrote' if existed else 'created'} {path} ({len(content)} bytes)",
-            data={"path": path, "bytes": len(content), "existed": existed},
+            summary=f"{'overwrote' if existed else 'created'} {path} ({on_disk} bytes on disk)",
+            data={"path": path, "bytes": on_disk, "chars": len(content), "existed": existed},
         )
 
     def _edit_file(self, path: str, old: str, new: str) -> ToolResult:

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI Exchange Board</title>
+<style>
+
+  :root {
+    color-scheme: light dark;
+    --bg: #f2f4f7;
+    --panel: #ffffff;
+    --ink: #1d2433;
+    --muted: #667082;
+    --border: #dcE1e8;
+    --quote-bg: #eef1f5;
+    --chip-bg: #e8ecf2;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13161b;
+      --panel: #1d232c;
+      --ink: #e7eaf0;
+      --muted: #99a3b1;
+      --border: #313a46;
+      --quote-bg: #161b22;
+      --chip-bg: #29313c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+          sans-serif;
+  }
+  main { max-width: 780px; margin: 0 auto; padding: 28px 16px 56px; }
+  header { margin-bottom: 22px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: .2px; }
+  .sub { margin: 0; color: var(--muted); font-size: 13px; }
+  .board { display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; }
+  .row.right { justify-content: flex-end; }
+  .msg { display: flex; gap: 10px; max-width: 86%; align-items: flex-start; }
+  .row.right .msg { flex-direction: row-reverse; }
+  .avatar {
+    flex: none;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--accent, #888);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 600;
+    margin-top: 2px;
+    text-transform: uppercase;
+  }
+  .bubble {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent, var(--border));
+    border-radius: 14px;
+    border-top-left-radius: 4px;
+    box-shadow: var(--shadow);
+    padding: 10px 14px 11px;
+    min-width: 0;
+  }
+  .row.right .bubble {
+    border-left: 1px solid var(--border);
+    border-right: 3px solid var(--accent, var(--border));
+    border-top-left-radius: 14px;
+    border-top-right-radius: 4px;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+    margin-bottom: 5px; font-size: 12px; color: var(--muted);
+  }
+  .sender { color: var(--accent, var(--ink)); font-weight: 700; font-size: 13px; }
+  .chip {
+    background: var(--chip-bg);
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 11px;
+    letter-spacing: .4px;
+    white-space: nowrap;
+  }
+  .chip.kind { text-transform: uppercase; font-weight: 600; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .evidence {
+    margin: 9px 0 0;
+    padding: 7px 11px;
+    background: var(--quote-bg);
+    border-left: 3px solid var(--accent, var(--muted));
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+  }
+  .evidence .src {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    margin-bottom: 2px;
+  }
+  .extra { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .panel {
+    margin-top: 26px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 14px 18px;
+  }
+  .panel h2 {
+    margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .8px; color: var(--muted);
+  }
+  .panel p { margin: 6px 0; font-size: 14px; }
+  .badge {
+    display: inline-block;
+    background: var(--chip-bg);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: .3px;
+  }
+  .footer { margin-top: 18px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+
+  .msg[data-sender="researcher"] { --accent: #4c7dd9; }
+  .msg[data-sender="engineer"] { --accent: #3f9d6f; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>CLI Exchange Board</h1>
+  <p class="sub">task: diagnose_latency_regression &#183; ended: SUCCESS</p>
+</header>
+<section class="board">
+<div class="row left">
+  <div class="msg" data-sender="researcher">
+    <div class="avatar">r</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">researcher</span><span class="arrow">&#8594;</span><span class="rcpt">engineer</span><span class="chip kind">HYPOTHESIS</span><span class="chip">round 1</span></div>
+      <div class="text">the regression is a resource exhaustion, not a slow query</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; metrics.csv</span>pool_in_use 12 -&gt; 100 while db_cpu_pct stays ~43</blockquote>
+      <div class="extra">confidence 0.6 &#183; unknowns: why an individual lookup is slow</div>
+    </div>
+  </div>
+</div>
+<div class="row right">
+  <div class="msg" data-sender="engineer">
+    <div class="avatar">e</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">engineer</span><span class="arrow">&#8594;</span><span class="rcpt">researcher</span><span class="chip kind">IMPLEMENTATION_PLAN</span><span class="chip">round 1</span></div>
+      <div class="text">write findings.md naming deploy c4f1a9 and the pool saturation</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; incident_notes.md</span>c4f1a9 shipped at 14:08; latency rose at 14:10</blockquote>
+      <div class="extra">confidence 0.6 &#183; unknowns: whether the lookup is cached</div>
+    </div>
+  </div>
+</div>
+<div class="row left">
+  <div class="msg" data-sender="researcher">
+    <div class="avatar">r</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">researcher</span><span class="arrow">&#8594;</span><span class="rcpt">engineer</span><span class="chip kind">CRITIQUE</span><span class="chip">round 2</span></div>
+      <div class="text">the write-up must say what the data does not show</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; incident_notes.md</span>no query timings are recorded anywhere</blockquote>
+      <div class="extra">confidence 0.5</div>
+    </div>
+  </div>
+</div>
+<div class="row right">
+  <div class="msg" data-sender="engineer">
+    <div class="avatar">e</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">engineer</span><span class="arrow">&#8594;</span><span class="rcpt">researcher</span><span class="chip kind">FINAL_REPORT</span><span class="chip">round 2</span></div>
+      <div class="text">findings.md records the cause, the evidence, and the unknowns</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; shell</span>findings.md written</blockquote>
+      <div class="extra">confidence 0.7 &#183; unknowns: why the lookup itself is slow</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<p class="footer">rounds: 2 &#183; handoffs: 4 &#183; disagreements: 0 &#183; unresolved_disagreements: 0 &#183; protocol_violations: 0 &#183; duplicate_work: 0 &#183; evidence_items: 4 &#183; blockers: 0 &#183; ignored_evidence: 0 &#183; verification_failures: 0</p>
+</main>
+</body>
+</html>
