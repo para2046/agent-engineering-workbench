@@ -102,20 +102,27 @@ class Harness:
         provider: ModelProvider,
         trials: Optional[int] = None,
         tool_timeout: int = 60,
+        policy=None,
     ) -> TaskResult:
+        """``policy`` overrides the system prompt for this run -- how a candidate
+        policy is evaluated without touching the live one."""
         n = trials if trials is not None else task.trials
         result = TaskResult(task_id=task.id)
         for trial in range(max(1, n)):
-            result.trials.append(self._run_one(task, provider, trial, tool_timeout))
+            result.trials.append(self._run_one(task, provider, trial, tool_timeout, policy))
         return result
 
-    def _run_one(self, task: Task, provider: ModelProvider, trial: int, tool_timeout: int) -> TrialResult:
+    def _run_one(self, task: Task, provider: ModelProvider, trial: int, tool_timeout: int,
+                 policy=None) -> TrialResult:
         run_id = new_run_id()
         ws = self.build_workspace(task, run_id)
         raw = RawStore(self.store.run_dir(run_id) / "raw")
         recorder = TrajectoryRecorder(self.store)
+        extra = {}
+        if policy is not None:
+            extra = {"system_prompt": policy.text, "prompt_version": policy.id}
         runner = AgentRunner(provider, ws, recorder, raw, tool_timeout=tool_timeout,
-                             retriever=self.retriever, prices=self.prices)
+                             retriever=self.retriever, prices=self.prices, **extra)
 
         traj = runner.run(task, trial=trial, run_id=run_id)
         traj.environment_outcome = self._snapshot(ws)

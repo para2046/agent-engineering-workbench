@@ -371,6 +371,99 @@ def cmd_prompts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_optimize(args: argparse.Namespace) -> int:
+    """Propose candidate policies, evaluate them, and run the promotion gate.
+
+    Promotes nothing without clearing the gate, and prints why when it refuses.
+    """
+    from ..optimization.datasets import DEV, REGRESSION, TEST, build_dataset
+    from ..optimization.optimizer import (
+        ReflectiveOptimizer,
+        feedback_from_analyses,
+        optimize,
+    )
+    from ..optimization.promotion import GateConfig, PromotionGate, result_from_task_results
+    from ..prompts import get as get_prompt
+    from ..runtime.agent import SYSTEM_PROMPT, SYSTEM_PROMPT_VERSION
+    from ..prompts import VersionedPrompt, register
+
+    ctx = Ctx(args)
+    if ctx.judge is None:
+        print("optimization needs a model to propose candidates -- pass "
+              "--judge-provider (e.g. --judge-provider claude)", file=sys.stderr)
+        return 2
+
+    baseline = register(VersionedPrompt(
+        name=SYSTEM_PROMPT_VERSION.split(":")[0],
+        version=SYSTEM_PROMPT_VERSION.split(":")[1],
+        text=SYSTEM_PROMPT,
+    ))
+
+    ds = build_dataset(load_tasks(Path(args.tasks)))
+    dev = ds.for_optimizer(DEV)
+    if not dev:
+        print(f"no tasks in the dev split of {args.tasks} -- nothing to optimize against; "
+              f"run `agentwb splits` to see the assignment", file=sys.stderr)
+        return 2
+
+    # Failure evidence, from stored analyses.
+    from ..analysis import failure_analyzer as fa
+    analyses = []
+    for row in ctx.experience.failures(limit=args.feedback_from):
+        loaded = fa.load(ctx.store.run_dir(row["trajectory_id"]))
+        if loaded is not None:
+            analyses.append(loaded)
+
+    provider = ctx.provider(args)
+
+    def evaluate(policy, tasks):
+        results = [ctx.harness.run_task(t, provider, trials=args.trials, policy=policy)
+                   for t in tasks]
+        return result_from_task_results("dev", results, ctx.prices)
+
+    gate = PromotionGate(GateConfig(
+        max_cost_per_trial=args.max_cost,
+        min_trials_for_confidence=args.min_trials,
+    ), prices=ctx.prices)
+
+    result = optimize(
+        baseline=baseline,
+        optimizer=ReflectiveOptimizer(ctx.judge),
+        feedback=feedback_from_analyses(analyses),
+        evaluate=evaluate,
+        gate=gate,
+        dev_tasks=dev,
+        test_tasks=ds.for_final_evaluation() or None,
+        regression_tasks=ds.split(REGRESSION) or None,
+        n_candidates=args.candidates,
+    )
+
+    if ctx.json:
+        print(json.dumps(result.to_dict(), indent=2, default=str))
+        return 0 if result.promoted else 1
+
+    print(f"{_c(BOLD, 'baseline')} {result.baseline_id}")
+    for c in result.rejected:
+        print(f"  {_c(RED, 'rejected')} {c.id} -- {c.rejected_reason}")
+    for c in result.candidates:
+        decision = result.evaluated.get(c.id)
+        if decision is None:
+            continue
+        mark = _c(GREEN, "PROMOTE") if decision.promote else _c(RED, "REJECT")
+        print(f"  [{mark}] {c.id}")
+        if c.rationale:
+            print(f"      {_c(DIM, c.rationale[:160])}")
+        for check in decision.checks:
+            tick = _c(GREEN, "ok") if check.passed else _c(RED, "no")
+            print(f"      [{tick}] {check.name}: {check.detail}")
+        for w in decision.warnings:
+            print(f"      {_c(YELLOW, 'warning')}: {w}")
+    for note in result.notes:
+        print(f"  {_c(DIM, note)}")
+    print(f"\n{_c(BOLD, result.summary())}")
+    return 0 if result.promoted else 1
+
+
 def cmd_splits(args: argparse.Namespace) -> int:
     """Show how tasks divide into train/dev/test/regression."""
     from ..optimization.datasets import SPLITS, build_dataset
@@ -551,6 +644,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("prompts", help="list registered prompt versions")
     sp.set_defaults(func=cmd_prompts)
+
+    sp = sub.add_parser("optimize",
+                        help="propose candidate policies and run the promotion gate")
+    sp.add_argument("--tasks", default="tasks")
+    sp.add_argument("--candidates", type=int, default=2, help="how many to propose")
+    sp.add_argument("--trials", type=int, default=1, help="trials per task per policy")
+    sp.add_argument("--feedback-from", type=int, default=10,
+                    help="how many recent failures to draw evidence from")
+    sp.add_argument("--max-cost", type=float, default=None,
+                    help="cost/trial ceiling; UNKNOWN cost blocks promotion when set")
+    sp.add_argument("--min-trials", type=int, default=20,
+                    help="below this, results are flagged as noise")
+    add_provider_flags(sp)
+    add_judge_flags(sp)
+    sp.set_defaults(func=cmd_optimize)
 
     sp = sub.add_parser("splits", help="show train/dev/test/regression assignment")
     sp.add_argument("--tasks", default="tasks")

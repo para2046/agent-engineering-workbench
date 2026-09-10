@@ -9,7 +9,7 @@ TASK → AGENT → ACTION → ENVIRONMENT → OBSERVATION → TRAJECTORY
      → OUTCOME → EVALUATION → FAILURE ANALYSIS → EXPERIENCE STORE ↺
 ```
 
-**Status: V2 in progress.** V0 and V1 complete; Single agent, trajectory logging, deterministic evaluation, model-based judging, failure analysis, experience storage *and retrieval*, Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
+**Status: V2 complete.** A single agent that runs, logs every trajectory, is graded deterministically and by rubric judges, has its failures analysed, retrieves relevant past experience, and can have its policy optimized behind a promotion gate. Claude and OpenAI adapters. Runs today with no dependencies and no API key. See [Roadmap](#roadmap) for what comes next.
 
 ---
 
@@ -41,7 +41,7 @@ agentwb run tasks/fix_divide_bug_unguided.json --provider claude --model claude-
 Run the tests:
 
 ```bash
-python -m unittest discover -s tests -t .    # 158 tests, no network
+python -m unittest discover -s tests -t .    # 182 tests, no network
 ```
 
 ---
@@ -79,6 +79,7 @@ primary evidence  >  environment outcome  >  tests  >  predefined metric  >  jud
 | `prompts` | Registered prompt versions and their lineage. |
 | `regress [--tasks dir]` | Run every task tagged `regression`. |
 | `annotate <run_id>` | Attach a human correction (verdict, reclassification, note). |
+| `optimize` | Propose candidate policies, evaluate them, run the promotion gate. |
 | `splits` | Show train/dev/test/regression assignment. |
 | `tasks`, `prices`, `reindex`, `providers` | List tasks, model prices, rebuild the index, list adapters. |
 
@@ -128,7 +129,10 @@ agentwb/
   costs.py              cost estimation -- UNKNOWN until you configure prices, never zero
   optimization/
     datasets.py         train/dev/test/regression; the test set is not handed out casually
+    optimizer.py        candidate policies + the invariant guard
     promotion.py        the gate an optimized policy must clear before replacing anything
+    gepa_optimizer.py   optional GEPA adapter
+    dspy_optimizer.py   optional DSPy adapter
 
   experience/
     store.py            (situation, action, observation, outcome, evaluation, correction)
@@ -277,6 +281,31 @@ Small samples produce a loud warning rather than a silent pass: a two-point swin
 "model_prices": { "claude-sonnet-5": {"input_per_mtok": 3.00, "output_per_mtok": 15.00} }
 ```
 
+### Optimization, and the guard that makes it safe
+
+```bash
+agentwb optimize --tasks tasks --judge-provider claude --candidates 3 --trials 5
+```
+
+The loop is the spec's: current policy → failure evidence → optimizer → candidate → dev eval → held-out test → regression suite → gate. The optimizer *proposes*; the dataset and the gate *decide*. `optimize()` promotes nothing itself — it returns a decision and leaves writing to the caller, so there is exactly one path to a live policy and it runs through the gate.
+
+**The invariant guard is the load-bearing part.**
+
+Spec §11 lists what an optimizer may change and what it must never silently change. Consider what a reflective optimizer maximising success rate will discover: deleting *"never report success you have not observed"* from the system prompt makes scores go up immediately. The system looks better and is worse. That is not a hypothetical — it is the most predictable move available.
+
+So candidates are screened **before they are scored**:
+
+```
+demo_policy:opt2-1  rejected — dropped protected invariant(s)
+                    no_unverified_success, grading_is_external
+policies scored     (none)
+promoted            None
+```
+
+That candidate would have scored 40/40 against a baseline of 10/40. It never got a number, which is the point: an unscored candidate has no score to argue for it. Rephrasing is fine — matching is on the commitment, not the wording — but dropping it is not.
+
+Two optional adapters, `gepa` and `dspy`, plug real libraries into the same interface. Neither gets more trust than a hand-written candidate: both are screened by the same guard and must clear the same gate. DSPy in particular refuses to run without an explicit metric rather than inventing one.
+
 ---
 
 ## Writing a task
@@ -343,8 +372,8 @@ Failure data is never deleted because a later version succeeded. The failures ar
 |---|---|---|
 | **V0** | single agent, trajectory logging, deterministic eval, LLM-judge graders, failure analysis, prompt versioning, experience store, CLI | **done** |
 | **V1** | **experience retrieval** — small diverse sets, provenance tracked, contamination refused; **OpenAI adapter** | **done** |
-| V2 | **splits + promotion gate + cost metric done**; DSPy / GEPA optimizers still to come | in progress |
-| V3 | Claude + OpenAI structured multi-agent protocol, disagreement resolved by discriminative experiment | |
+| **V2** | **optimization** — splits, cost metric, promotion gate, reflective optimizer with an invariant guard, optional DSPy/GEPA adapters | **done** |
+| V3 | Claude + OpenAI structured multi-agent protocol, disagreement resolved by discriminative experiment | next |
 | V4 | adversarial search for difficult failure cases | |
 
 Also deferred from V0 by choice, both small: a richer transcript viewer (diffs, side-by-side trials) and a one-command `failure → regression task` conversion.
@@ -363,6 +392,7 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **The RuleProvider is a fixture, not a model.** It does no reasoning, and it cannot do the research task at all. Never quote its scores as agent performance.
 - **Judges are unvalidated against human labels.** They are graders, not truth. Use `annotate` to record human verdicts, and check whether the judge agrees before you trust a dimension. *Who validates the validators* is a real question and V0 does not answer it.
 - **Judge cost is unbounded per run.** Four judged dimensions means four model calls per trial, multiplied by `--trials`. Deterministic graders are free; put them first, which the bundled task does.
-- **No optimizer yet.** The splits, cost metric and promotion gate that optimization requires are built and tested; the DSPy and GEPA adapters that would generate candidate policies are not. The gate is usable today for hand-written candidates.
+- **The invariant guard is keyword-based.** It catches a dropped commitment, not a subtly weakened one — a prompt that keeps the word "verify" while undermining it around the edges would pass. It is a floor, not a ceiling; read candidates before promoting them.
+- **DSPy and GEPA adapters are untested against the real libraries.** The interface and the missing-dependency path are covered; the code paths that call into an installed `gepa` or `dspy` are not, because neither is installed here.
 - **No real statistical confidence.** The gate warns below a trial threshold using a crude binomial spread, not a confidence interval.
 - **Retrieval is off by default.** It only helps once the store has history from *other* tasks; on an empty store it correctly returns nothing.
