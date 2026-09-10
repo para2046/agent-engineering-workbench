@@ -62,6 +62,7 @@ def register_provider(key: str, cls: type) -> None:
 # without that being obvious.
 _ADAPTER_MODULES: dict[str, str] = {
     "mock": "mock",
+    "session": "session",
     "scripted": "mock",
     # protocol-speaking fixture, so the multi-agent rung is demonstrable
     # offline; lives with the judge fixtures rather than the real adapters.

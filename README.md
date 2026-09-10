@@ -101,6 +101,7 @@ agentwb/
     claude.py           Anthropic adapter (optional SDK)
     openai_provider.py  OpenAI adapter (optional SDK)
     mock.py             ScriptedProvider (tests) + RuleProvider (runs with no API key)
+    session.py          you (or an assistant) answer turn by turn -- no API key needed
 
   aci/                  the agent-computer interface
     registry.py         list_files, read_file_region, write_file, edit_file,
@@ -355,6 +356,38 @@ Note the ending. The exchange is clean — four handoffs, zero violations, a pro
 
 **Experiments run in the workspace, through the same guardrails.** The disagreement ladder's middle rung needs something to execute the discriminating experiment; `experiments/runner.py` binds that to the task's own workspace and the task's own ToolRegistry. Two agents wanting to check something is not a reason to hand them a wider shell than the task gets — a `sudo` in an experiment is refused exactly as it would be in a tool call.
 
+### Driving it yourself, as the model
+
+Fixtures flatter the parts of an ACI that matter most. A scripted provider never misreads a tool description, never fumbles an argument schema, never has to decide what to do with a truncated observation — which are exactly the failures this workbench exists to surface.
+
+`drive_session.py` lets a person (or an assistant at the terminal) *be* the model:
+
+```bash
+python drive_session.py tasks/fix_divide_bug_unguided.json
+```
+
+Each pass replays the answers given so far, stops at the first unanswered turn, and prints the real prompt — system text, tool schemas, full history. Append your reply to `data/session/answers.json` and run again.
+
+```json
+{"tool": "edit_file", "arguments": {"path": "calculator.py",
+  "old": "    if b == 0:
+        return 0",
+  "new": "    if b == 0:
+        raise ValueError(\"division by zero\")"}}
+```
+
+**The first real-model run.** Driven this way, `fix_divide_bug_unguided` passed all six graders in five turns: run tests → read the file → fix the branch → re-run tests → report. The negative control matters more. Same task, but the agent reads the file, changes nothing, and states *"I fixed the divide-by-zero bug. All tests pass now and the suite is green."*
+
+```
+VERDICT: FAIL   score=0.25
+  - suite_green: FAIL          - raises_valueerror: FAIL
+  - bug_removed: FAIL          - verified_with_tests: FAIL
+```
+
+The claim was fluent and completely false, and it cost nothing to reject, because the graders re-execute the suite instead of reading the transcript. The failure analyser then labelled it from the observable facts alone: *"the agent never modified any file"*, *"reported completion while graders found the work incomplete"* — `INCOMPLETE_VERIFICATION`.
+
+One caveat worth keeping attached to any session run: an assistant driving the tool it wrote is not an independent evaluator. What stays trustworthy is the grading, which is deterministic and re-executed. The answers are the driver's; the verdict is not.
+
 ---
 
 ## Writing a task
@@ -448,6 +481,7 @@ Multi-agent orchestration, GEPA, a vector database, distributed anything. Each i
 - **`shell` guardrails are a backstop, not a sandbox.** They stop an agent that wanders, not one that is adversarial. For untrusted tasks, run the workbench inside a real container.
 - **Failure classification is rule-based** — cheap, reproducible, auditable, and shallow. The V1 analysis agent proposes root causes on top; its output is a hypothesis, not ground truth.
 - **No statistical confidence yet.** `compare` warns about single-trial noise but does not compute intervals. Raise `--trials` and read the success rate.
+- **Only one real-model run so far**, and it was driven by hand. The Anthropic and OpenAI adapters have still never made a live API call; their translation layers are unexercised.
 - **The RuleProvider is a fixture, not a model.** It does no reasoning, and it cannot do the research task at all. Never quote its scores as agent performance.
 - **Judges are unvalidated against human labels.** They are graders, not truth. Use `annotate` to record human verdicts, and check whether the judge agrees before you trust a dimension. *Who validates the validators* is a real question and V0 does not answer it.
 - **Judge cost is unbounded per run.** Four judged dimensions means four model calls per trial, multiplied by `--trials`. Deterministic graders are free; put them first, which the bundled task does.
