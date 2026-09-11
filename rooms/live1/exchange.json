@@ -1,0 +1,162 @@
+{
+  "task_id": "live1",
+  "rounds": 2,
+  "termination_reason": "MAX_ITERATIONS",
+  "metrics": {
+    "rounds": 2,
+    "handoffs": 3,
+    "disagreements": 0,
+    "unresolved_disagreements": 0,
+    "protocol_violations": 1,
+    "duplicate_work": 0,
+    "evidence_items": 14,
+    "blockers": 0,
+    "ignored_evidence": 0,
+    "verification_failures": 0
+  },
+  "messages": [
+    {
+      "message_id": "msg_352d31388b",
+      "sender": "researcher",
+      "recipient": "engineer",
+      "task_id": "live1",
+      "type": "EVIDENCE",
+      "claim": "At current volume the move to embeddings is unjustified: the experience store contains 2 entries, the task corpus ~8 tasks, and the codebase's own spec gates a vector store on retrieval volume that does not exist yet.",
+      "evidence": [
+        {
+          "source": "data/experience/experience.jsonl",
+          "observation": "wc -l reports 2 lines -- the entire retrieval corpus is two experiences; any scorer, including exact string match, is adequate over N=2."
+        },
+        {
+          "source": "agentwb/experience/retrieval.py:24-26",
+          "observation": "module docstring: 'No vector database (spec section 22). Lexical scoring over a local JSONL store is adequate at this volume... swap the scorer when retrieval volume actually justifies it, not before.'"
+        },
+        {
+          "source": "agentwb/experience/retrieval.py:242-248",
+          "observation": "_similarity is Jaccard over stopword-filtered term sets; the docstring's stated reason is auditability: 'unlike an embedding it can be explained to whoever asks why a given experience was shown.'"
+        },
+        {
+          "source": "agentwb/experience/retrieval.py:82-94",
+          "observation": "RetrievalResult.provenance records query_terms and per-item scores into the trajectory for audit; term-level provenance is only meaningful under a lexical scorer -- an embedding swap would need a replacement provenance story."
+        },
+        {
+          "source": "docs/SPEC.md:1038",
+          "observation": "'Only introduce a vector database when semantic retrieval volume justifies it.'"
+        },
+        {
+          "source": "tasks/ and tasks_opt/",
+          "observation": "8 task JSON files total; the population generating experiences is tiny."
+        }
+      ],
+      "confidence": 0.8,
+      "unknowns": [
+        "Whether Jaccard's known failure mode (zero score on synonymous-but-disjoint vocabulary, e.g. 'rate limiter' vs 'throttle') actually occurs in this task set -- no retrieval-quality measurement exists in the repo that I could find.",
+        "Expected growth rate of experience.jsonl per sprint, which determines when 'volume justifies it' triggers."
+      ],
+      "recommended_action": "Do not swap the scorer now. Instead measure the real risk: build a ~15-pair labeled relevance set from the existing task prompts (including deliberate synonym pairs), score with _similarity, and record how many relevant pairs fall below min_score=0.05. That number, not taste, decides if/when embeddings are needed. Note the contamination guards (same-task refusal, held-out exclusion) and MMR diversity are scorer-independent and survive either choice.",
+      "verification": {
+        "metric": "recall@3 of lexical Jaccard on a labeled relevant-pair set drawn from the actual task corpus",
+        "expected_if_correct": "lexical recall@3 >= ~0.8; synonym-miss cases rare or absent in this domain's vocabulary",
+        "expected_if_wrong": "lexical recall@3 materially below embeddings (e.g. <0.6) with multiple relevant pairs scoring 0.0 from vocabulary mismatch"
+      },
+      "in_reply_to": null,
+      "round": 1,
+      "at": "2026-09-11T01:45:58Z"
+    },
+    {
+      "message_id": "msg_a08b044981",
+      "sender": "engineer",
+      "recipient": "researcher",
+      "task_id": "live1",
+      "type": "EXPERIMENT_RESULT",
+      "claim": "Ran the real retriever over the real store and task corpus: the decision stays lexical, but the live defect is precision (harness-boilerplate false positives above min_score), the synonym zero-recall failure mode is confirmed reproducible, and an embedding swap would touch three coupled scales, not one function.",
+      "evidence": [
+        {
+          "source": "data/experience/experience.jsonl",
+          "observation": "Now 3 lines, not 2 (a run was added since the researcher counted) -- the store grows while we deliberate, but N=3 is still trivially below any volume gate."
+        },
+        {
+          "source": "experiment: ExperienceRetriever.retrieve() over all 6 tasks/*.json against the live store",
+          "observation": "dev_rate_limiter retrieved fix_divide_bug_unguided/fix_divide_dev at scores 0.213/0.182/0.145 and dev_comms_visualizer at 0.090/0.077/0.061 -- all above min_score=0.05, so a rate-limiter task is shown calculator-bugfix experiences today. Overlapping terms are pure harness boilerplate: ['capability','encode','full','modify','passes','suite','test','tests']."
+        },
+        {
+          "source": "experiment: synonym probe ('The checks are broken. Repair the division routine in the arithmetic module')",
+          "observation": "Retrieved nothing (score 0) against three stored calculator-divide experiences -- confirms the researcher's unknown #1: Jaccard's disjoint-vocabulary failure is real and reproducible. A partial-paraphrase probe still retrieved correctly at 0.375."
+        },
+        {
+          "source": "agentwb/experience/retrieval.py:173-181,217",
+          "observation": "min_score (0.05), the PASS/FAIL multipliers (1.25/1.15/0.85), and the MMR redundancy term in _select_diverse all consume the same Jaccard scale; swapping to cosine-of-embeddings requires recalibrating all three, not just replacing _similarity (7 lines)."
+        },
+        {
+          "source": "docs/SPEC.md:1038",
+          "observation": "'Only introduce a vector database when semantic retrieval volume justifies it' -- the gate the researcher cited is confirmed in the spec, and line 99 lists a vector DB among things the basic system must NOT require."
+        }
+      ],
+      "confidence": 0.85,
+      "unknowns": [
+        "Whether IDF-weighted lexical scoring (which down-weights corpus-common boilerplate for free) would close the precision gap as well as embeddings would -- untested, and there is no labeled relevance data in the repo to test against.",
+        "Growth rate of experience.jsonl per sprint, so the volume gate has no measurable trigger yet."
+      ],
+      "recommended_action": "Keep lexical scoring. Two cheap fixes first: (1) extend STOPWORDS with harness boilerplate (test/tests/suite/passes/capability/modify/encode/full) or switch _similarity to IDF-weighted overlap, and (2) re-tune min_score upward -- the observed false positives are the defect users would actually notice, and embeddings are neither necessary nor sufficient for it. Researcher should propose a retrieval-quality measurement (labeled relevant/irrelevant task pairs) so 'volume justifies it' becomes a testable trigger instead of taste.",
+      "verification": {
+        "metric": "false-positive rate at min_score=0.05: count of retrieved experiences for tasks with no genuinely related prior run, before and after stopword/IDF fix",
+        "expected_if_correct": "dev_rate_limiter and dev_comms_visualizer retrieve zero calculator-bugfix experiences after the fix, while fix_divide_bug still retrieves fix_divide_dev at high score",
+        "expected_if_wrong": "boilerplate terms are not the driver: false positives persist after removing them, which would strengthen the case for semantic scoring"
+      },
+      "in_reply_to": null,
+      "round": 1,
+      "at": "2026-09-11T01:47:32Z"
+    },
+    {
+      "message_id": "msg_fb36a2ea31",
+      "sender": "engineer",
+      "recipient": "researcher",
+      "task_id": "live1",
+      "type": "EXPERIMENT_RESULT",
+      "claim": "The verification I committed to in turn 1 now has a result: adding the eight observed boilerplate terms to STOPWORDS (runtime monkeypatch, no repo change) eliminates every cross-domain false positive while relevant retrieval survives -- the precision defect is vocabulary hygiene, not a lexical-vs-semantic gap, so it cannot be an argument for embeddings.",
+      "evidence": [
+        {
+          "source": "experiment: STOPWORDS |= {test,tests,suite,passes,capability,modify,encode,full}, rerun over all 6 tasks/*.json",
+          "observation": "dev_rate_limiter, dev_comms_visualizer, dev_disagreement_flow, diagnose_latency_regression now retrieve [] (previously up to 0.213); fix_divide_bug still retrieves fix_divide_bug_unguided/fix_divide_dev at 0.125/0.122/0.085 and fix_divide_bug_unguided still retrieves fix_divide_dev at 0.625 -- exactly the expected_if_correct branch of my turn-1 verification block."
+        },
+        {
+          "source": "experiment: same run, true-positive margin",
+          "observation": "Relevant scores dropped (0.234 -> 0.125) because shared boilerplate inflated them too, but remain 2.5x above min_score=0.05 -- the fix does not cost recall on the one genuinely related pair in the corpus."
+        },
+        {
+          "source": "python -m unittest tests.test_retrieval",
+          "observation": "Baseline suite: 23 tests, all OK, including test_irrelevant_experience_is_not_retrieved and test_stopwords_are_ignored -- the contamination and refusal guarantees are covered by tests and are scorer-independent (same-task/held-out exclusion happens before scoring, retrieval.py:155-160)."
+        }
+      ],
+      "confidence": 0.9,
+      "unknowns": [
+        "The synonym zero-recall failure remains under any lexical scorer (my turn-1 probe scored 0 and still does) -- only embeddings or query expansion would fix it, but there is no evidence yet that any real task pair in this workbench exhibits it.",
+        "Whether the hardcoded stopword extension generalizes, or whether IDF weighting (corpus-derived, no constants to maintain) is the right permanent form of the fix -- undecidable at N=3 experiences."
+      ],
+      "recommended_action": "Decision-ready from my side: stay lexical; land the boilerplate-stopword or IDF fix as a small PR with the false-positive regression test above. If the researcher wants the volume gate to be testable rather than taste, they should propose the measurement (labeled relevant/irrelevant task pairs plus a recall@k threshold that, once missed by lexical scoring on real data, triggers the embedding migration). Absent objection, my turn 3 will be the FINAL_REPORT recording this.",
+      "verification": {
+        "metric": "regression test: retrieval for a rate-limiter-style task against calculator-bugfix experiences must return empty; retrieval for a calculator-bugfix paraphrase must return the fix_divide experiences",
+        "expected_if_correct": "test passes with the stopword/IDF fix applied and fails on current main",
+        "expected_if_wrong": "false positives reappear as the store grows with new boilerplate vocabulary, which would argue for corpus-derived IDF over a hardcoded list"
+      },
+      "in_reply_to": null,
+      "round": 2,
+      "at": "2026-09-11T01:53:19Z"
+    }
+  ],
+  "disagreements": [],
+  "violations": [
+    {
+      "round": 2,
+      "agent": "researcher",
+      "kind": "unusable",
+      "problem": "seat 'researcher' did not reply within 240s -- the occupant may have crashed or wandered off",
+      "category": "ROLE_VIOLATION"
+    }
+  ],
+  "failure_categories": [
+    "ROLE_VIOLATION"
+  ],
+  "started_at": "2026-09-11T01:45:29Z",
+  "ended_at": "2026-09-11T01:53:19Z"
+}

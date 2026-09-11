@@ -853,9 +853,15 @@ def cmd_optimize(args: argparse.Namespace) -> int:
         min_trials_for_confidence=args.min_trials,
     ), prices=ctx.prices)
 
+    if args.optimizer == "dspy":
+        from ..optimization.dspy_optimizer import DSPyOptimizer
+        chosen = DSPyOptimizer(provider=ctx.judge.provider)
+    else:
+        chosen = ReflectiveOptimizer(ctx.judge)
+
     result = optimize(
         baseline=baseline,
-        optimizer=ReflectiveOptimizer(ctx.judge),
+        optimizer=chosen,
         feedback=feedback_from_analyses(analyses),
         evaluate=evaluate,
         gate=gate,
@@ -1078,6 +1084,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="propose candidate policies and run the promotion gate")
     sp.add_argument("--tasks", default="tasks")
     sp.add_argument("--candidates", type=int, default=2, help="how many to propose")
+    sp.add_argument("--optimizer", choices=["reflective", "dspy"], default="reflective",
+                    help="proposal engine; both feed the same guard and gate")
     sp.add_argument("--trials", type=int, default=1, help="trials per task per policy")
     sp.add_argument("--feedback-from", type=int, default=10,
                     help="how many recent failures to draw evidence from")

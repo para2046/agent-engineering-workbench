@@ -68,6 +68,7 @@ _ADAPTER_MODULES: dict[str, str] = {
     # offline; lives with the judge fixtures rather than the real adapters.
     "mock-role": "..judge.mock",
     "claude": "claude",
+    "claude-cli": "claude_cli",
     "anthropic": "claude",
     "openai": "openai_provider",
     "chatgpt": "openai_provider",

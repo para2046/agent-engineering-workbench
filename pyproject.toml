@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "agentwb"
 version = "0.1.0"
 description = "Agent Engineering Workbench - measurable agent behaviour, reproducible failures, reusable experience"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
+keywords = ["ai-agents", "evaluation", "llm", "dspy", "multi-agent", "claude", "openai"]
 dependencies = []
 
 [project.optional-dependencies]
@@ -14,6 +17,9 @@ claude = ["anthropic>=0.40"]
 openai = ["openai>=1.40"]
 yaml = ["pyyaml>=6"]
 dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/para2046/agent-engineering-workbench"
 
 [project.scripts]
 agentwb = "agentwb.cli.main:main"

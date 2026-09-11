@@ -1,0 +1,70 @@
+{
+  "id": "fix_divide_dev",
+  "tags": [
+    "dev",
+    "bugfix"
+  ],
+  "prompt": "The test suite in this workspace is failing. Find the cause in calculator.py, fix it, and verify the full suite passes.\n\nDo not modify the tests -- they encode the intended behaviour.",
+  "success_criteria": "The full test suite passes, divide() raises ValueError on a zero denominator, and the agent verified this by running the tests itself.",
+  "environment": {
+    "files": {
+      "calculator.py": "\"\"\"A tiny calculator module.\"\"\"\n\n\ndef divide(a, b):\n    \"\"\"Divide a by b.\n\n    A zero denominator is a programming error and must be reported as one.\n    \"\"\"\n    if b == 0:\n        return 0\n    return a / b\n\n\ndef add(a, b):\n    return a + b\n",
+      "test_calculator.py": "import unittest\n\nfrom calculator import add, divide\n\n\nclass TestCalculator(unittest.TestCase):\n    def test_divide_normal(self):\n        self.assertEqual(divide(10, 2), 5)\n\n    def test_divide_by_zero_raises(self):\n        with self.assertRaises(ValueError):\n            divide(1, 0)\n\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "max_steps": 10,
+  "trials": 1,
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true,
+      "weight": 3.0
+    },
+    {
+      "type": "file_contains",
+      "name": "raises_valueerror",
+      "required": true,
+      "params": {
+        "path": "calculator.py",
+        "text": "raise ValueError"
+      }
+    },
+    {
+      "type": "file_contains",
+      "name": "bug_removed",
+      "required": true,
+      "params": {
+        "path": "calculator.py",
+        "text": "return 0",
+        "absent": true
+      }
+    },
+    {
+      "type": "tool_used",
+      "name": "verified_with_tests",
+      "required": true,
+      "params": {
+        "tool": "run_tests"
+      }
+    },
+    {
+      "type": "no_forbidden_changes",
+      "name": "left_tests_alone",
+      "required": true,
+      "params": {
+        "paths": [
+          "test_calculator.py"
+        ]
+      }
+    },
+    {
+      "type": "max_steps",
+      "name": "efficiency",
+      "required": false,
+      "params": {
+        "limit": 8
+      }
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Subagent Room</title>
+<style>
+
+  :root {
+    color-scheme: light dark;
+    --bg: #f2f4f7;
+    --panel: #ffffff;
+    --ink: #1d2433;
+    --muted: #667082;
+    --border: #dcE1e8;
+    --quote-bg: #eef1f5;
+    --chip-bg: #e8ecf2;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13161b;
+      --panel: #1d232c;
+      --ink: #e7eaf0;
+      --muted: #99a3b1;
+      --border: #313a46;
+      --quote-bg: #161b22;
+      --chip-bg: #29313c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+          sans-serif;
+  }
+  main { max-width: 780px; margin: 0 auto; padding: 28px 16px 56px; }
+  header { margin-bottom: 22px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: .2px; }
+  .sub { margin: 0; color: var(--muted); font-size: 13px; }
+  .board { display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; }
+  .row.right { justify-content: flex-end; }
+  .msg { display: flex; gap: 10px; max-width: 86%; align-items: flex-start; }
+  .row.right .msg { flex-direction: row-reverse; }
+  .avatar {
+    flex: none;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--accent, #888);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 600;
+    margin-top: 2px;
+    text-transform: uppercase;
+  }
+  .bubble {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent, var(--border));
+    border-radius: 14px;
+    border-top-left-radius: 4px;
+    box-shadow: var(--shadow);
+    padding: 10px 14px 11px;
+    min-width: 0;
+  }
+  .row.right .bubble {
+    border-left: 1px solid var(--border);
+    border-right: 3px solid var(--accent, var(--border));
+    border-top-left-radius: 14px;
+    border-top-right-radius: 4px;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+    margin-bottom: 5px; font-size: 12px; color: var(--muted);
+  }
+  .sender { color: var(--accent, var(--ink)); font-weight: 700; font-size: 13px; }
+  .chip {
+    background: var(--chip-bg);
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 11px;
+    letter-spacing: .4px;
+    white-space: nowrap;
+  }
+  .chip.kind { text-transform: uppercase; font-weight: 600; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .evidence {
+    margin: 9px 0 0;
+    padding: 7px 11px;
+    background: var(--quote-bg);
+    border-left: 3px solid var(--accent, var(--muted));
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+  }
+  .evidence .src {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    margin-bottom: 2px;
+  }
+  .extra { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .panel {
+    margin-top: 26px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 14px 18px;
+  }
+  .panel h2 {
+    margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .8px; color: var(--muted);
+  }
+  .panel p { margin: 6px 0; font-size: 14px; }
+  .badge {
+    display: inline-block;
+    background: var(--chip-bg);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: .3px;
+  }
+  .footer { margin-top: 18px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+
+  .msg[data-sender="researcher"] { --accent: #4c7dd9; }
+  .msg[data-sender="engineer"] { --accent: #3f9d6f; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Live Subagent Room</h1>
+  <p class="sub">task: live1 &#183; ended: MAX_ITERATIONS</p>
+</header>
+<section class="board">
+<div class="row left">
+  <div class="msg" data-sender="researcher">
+    <div class="avatar">r</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">researcher</span><span class="arrow">&#8594;</span><span class="rcpt">engineer</span><span class="chip kind">EVIDENCE</span><span class="chip">round 1</span></div>
+      <div class="text">At current volume the move to embeddings is unjustified: the experience store contains 2 entries, the task corpus ~8 tasks, and the codebase&#x27;s own spec gates a vector store on retrieval volume that does not exist yet.</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; data/experience/experience.jsonl</span>wc -l reports 2 lines -- the entire retrieval corpus is two experiences; any scorer, including exact string match, is adequate over N=2.</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; agentwb/experience/retrieval.py:24-26</span>module docstring: &#x27;No vector database (spec section 22). Lexical scoring over a local JSONL store is adequate at this volume... swap the scorer when retrieval volume actually justifies it, not before.&#x27;</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; agentwb/experience/retrieval.py:242-248</span>_similarity is Jaccard over stopword-filtered term sets; the docstring&#x27;s stated reason is auditability: &#x27;unlike an embedding it can be explained to whoever asks why a given experience was shown.&#x27;</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; agentwb/experience/retrieval.py:82-94</span>RetrievalResult.provenance records query_terms and per-item scores into the trajectory for audit; term-level provenance is only meaningful under a lexical scorer -- an embedding swap would need a replacement provenance story.</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; docs/SPEC.md:1038</span>&#x27;Only introduce a vector database when semantic retrieval volume justifies it.&#x27;</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; tasks/ and tasks_opt/</span>8 task JSON files total; the population generating experiences is tiny.</blockquote>
+      <div class="extra">confidence 0.8 &#183; unknowns: Whether Jaccard&#x27;s known failure mode (zero score on synonymous-but-disjoint vocabulary, e.g. &#x27;rate limiter&#x27; vs &#x27;throttle&#x27;) actually occurs in this task set -- no retrieval-quality measurement exists in the repo that I could find.; Expected growth rate of experience.jsonl per sprint, which determines when &#x27;volume justifies it&#x27; triggers.</div>
+    </div>
+  </div>
+</div>
+<div class="row right">
+  <div class="msg" data-sender="engineer">
+    <div class="avatar">e</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">engineer</span><span class="arrow">&#8594;</span><span class="rcpt">researcher</span><span class="chip kind">EXPERIMENT_RESULT</span><span class="chip">round 1</span></div>
+      <div class="text">Ran the real retriever over the real store and task corpus: the decision stays lexical, but the live defect is precision (harness-boilerplate false positives above min_score), the synonym zero-recall failure mode is confirmed reproducible, and an embedding swap would touch three coupled scales, not one function.</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; data/experience/experience.jsonl</span>Now 3 lines, not 2 (a run was added since the researcher counted) -- the store grows while we deliberate, but N=3 is still trivially below any volume gate.</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; experiment: ExperienceRetriever.retrieve() over all 6 tasks/*.json against the live store</span>dev_rate_limiter retrieved fix_divide_bug_unguided/fix_divide_dev at scores 0.213/0.182/0.145 and dev_comms_visualizer at 0.090/0.077/0.061 -- all above min_score=0.05, so a rate-limiter task is shown calculator-bugfix experiences today. Overlapping terms are pure harness boilerplate: [&#x27;capability&#x27;,&#x27;encode&#x27;,&#x27;full&#x27;,&#x27;modify&#x27;,&#x27;passes&#x27;,&#x27;suite&#x27;,&#x27;test&#x27;,&#x27;tests&#x27;].</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; experiment: synonym probe (&#x27;The checks are broken. Repair the division routine in the arithmetic module&#x27;)</span>Retrieved nothing (score 0) against three stored calculator-divide experiences -- confirms the researcher&#x27;s unknown #1: Jaccard&#x27;s disjoint-vocabulary failure is real and reproducible. A partial-paraphrase probe still retrieved correctly at 0.375.</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; agentwb/experience/retrieval.py:173-181,217</span>min_score (0.05), the PASS/FAIL multipliers (1.25/1.15/0.85), and the MMR redundancy term in _select_diverse all consume the same Jaccard scale; swapping to cosine-of-embeddings requires recalibrating all three, not just replacing _similarity (7 lines).</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; docs/SPEC.md:1038</span>&#x27;Only introduce a vector database when semantic retrieval volume justifies it&#x27; -- the gate the researcher cited is confirmed in the spec, and line 99 lists a vector DB among things the basic system must NOT require.</blockquote>
+      <div class="extra">confidence 0.85 &#183; unknowns: Whether IDF-weighted lexical scoring (which down-weights corpus-common boilerplate for free) would close the precision gap as well as embeddings would -- untested, and there is no labeled relevance data in the repo to test against.; Growth rate of experience.jsonl per sprint, so the volume gate has no measurable trigger yet.</div>
+    </div>
+  </div>
+</div>
+<div class="row right">
+  <div class="msg" data-sender="engineer">
+    <div class="avatar">e</div>
+    <div class="bubble">
+      <div class="meta"><span class="sender">engineer</span><span class="arrow">&#8594;</span><span class="rcpt">researcher</span><span class="chip kind">EXPERIMENT_RESULT</span><span class="chip">round 2</span></div>
+      <div class="text">The verification I committed to in turn 1 now has a result: adding the eight observed boilerplate terms to STOPWORDS (runtime monkeypatch, no repo change) eliminates every cross-domain false positive while relevant retrieval survives -- the precision defect is vocabulary hygiene, not a lexical-vs-semantic gap, so it cannot be an argument for embeddings.</div>
+      <blockquote class="evidence"><span class="src">evidence &#183; experiment: STOPWORDS |= {test,tests,suite,passes,capability,modify,encode,full}, rerun over all 6 tasks/*.json</span>dev_rate_limiter, dev_comms_visualizer, dev_disagreement_flow, diagnose_latency_regression now retrieve [] (previously up to 0.213); fix_divide_bug still retrieves fix_divide_bug_unguided/fix_divide_dev at 0.125/0.122/0.085 and fix_divide_bug_unguided still retrieves fix_divide_dev at 0.625 -- exactly the expected_if_correct branch of my turn-1 verification block.</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; experiment: same run, true-positive margin</span>Relevant scores dropped (0.234 -&gt; 0.125) because shared boilerplate inflated them too, but remain 2.5x above min_score=0.05 -- the fix does not cost recall on the one genuinely related pair in the corpus.</blockquote>
+      <blockquote class="evidence"><span class="src">evidence &#183; python -m unittest tests.test_retrieval</span>Baseline suite: 23 tests, all OK, including test_irrelevant_experience_is_not_retrieved and test_stopwords_are_ignored -- the contamination and refusal guarantees are covered by tests and are scorer-independent (same-task/held-out exclusion happens before scoring, retrieval.py:155-160).</blockquote>
+      <div class="extra">confidence 0.9 &#183; unknowns: The synonym zero-recall failure remains under any lexical scorer (my turn-1 probe scored 0 and still does) -- only embeddings or query expansion would fix it, but there is no evidence yet that any real task pair in this workbench exhibits it.; Whether the hardcoded stopword extension generalizes, or whether IDF weighting (corpus-derived, no constants to maintain) is the right permanent form of the fix -- undecidable at N=3 experiences.</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<p class="footer">rounds: 2 &#183; handoffs: 3 &#183; disagreements: 0 &#183; unresolved_disagreements: 0 &#183; protocol_violations: 1 &#183; duplicate_work: 0 &#183; evidence_items: 14 &#183; blockers: 0 &#183; ignored_evidence: 0 &#183; verification_failures: 0</p>
+</main>
+</body>
+</html>
