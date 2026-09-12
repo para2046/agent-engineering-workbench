@@ -61,9 +61,13 @@ def tests_pass(ctx: GradingContext, params: dict[str, Any]) -> GraderResult:
     }]
     if proc.returncode == 0 and _ran_any_tests(out):
         return ok(1.0, evidence)
-    if proc.returncode == 0:
-        # a green exit with zero tests collected proves nothing
-        return unknown(evidence, error="test runner exited 0 but collected no tests")
+    # Zero tests collected proves nothing, whichever runner said it: unittest
+    # reports it with exit 0, pytest with its dedicated exit code 5. Found when
+    # installing dspy brought pytest into the environment and flipped this
+    # path from "exit 0, no tests" to "exit 5" -- same non-evidence, and it
+    # must read as UNKNOWN in both dialects, never as FAIL.
+    if proc.returncode == 0 or (use_pytest and proc.returncode == 5):
+        return unknown(evidence, error="test runner collected no tests")
     return bad(0.0, evidence)
 
 

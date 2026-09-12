@@ -55,7 +55,8 @@ class TestDeterministicGraders(GraderCase):
         self.assertIs(self.grade("tests_pass").verdict, GraderVerdict.FAIL)
 
     def test_empty_suite_is_unknown_not_pass(self):
-        """A green exit that collected zero tests proves nothing."""
+        """Zero tests collected proves nothing -- unittest says it with exit 0,
+        pytest with exit code 5; both must read UNKNOWN, never FAIL or PASS."""
         result = self.grade("tests_pass")
         self.assertIs(result.verdict, GraderVerdict.UNKNOWN)
         self.assertIsNotNone(result.error)

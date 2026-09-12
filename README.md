@@ -98,6 +98,23 @@ python drive_room.py rooms/demo "Should we migrate retrieval to embeddings?" \
 
 Each occupant just watches `<room>/<seat>/prompt.json` and writes `<room>/<seat>/reply.json` (the prompt itself documents the message format). Schema validation, role remits, disagreement resolution, round budgets, and the final graded `exchange.json` all still apply — the room adds participation, not exemptions. `demo/viz.py` renders any exchange or single-agent trajectory as a chat-style messageboard; `demo/flow.py` renders how a disagreement was resolved.
 
+### The swarm: many workers, one queue, one honest grader
+
+For work bigger than one conversation: seed a shared queue, let **any number of workers join or leave at will**, and let the host grade everything.
+
+```bash
+python drive_swarm.py swarms/big tasks/a.json tasks/b.json tasks/c.json     --after c=a,b        # c stays blocked until a AND b pass grading
+```
+
+A worker's whole contract is four file operations: atomically **claim** a ticket by renaming it out of `open/`, work in the ticket's workspace, heartbeat the claim, **submit** to `done/`. No registry, no server, no locks — the rename *is* the lock (two racing workers get exactly one winner), and a crashed worker's claim silently re-queues when its lease expires.
+
+Two properties survive at swarm scale:
+
+- **A worker's success claim decides nothing.** `done/` records a belief; `graded/` is written only by the host after re-running the task's graders against the real workspace.
+- **Dependencies gate on verdicts, not claims.** Downstream work unblocks when its prerequisites *pass grading* — a swarm must not compound one agent's unverified mistake into everyone's.
+
+Demonstrated live: two independent Claude Code subagent workers claimed tasks in parallel from one queue (MinStack and RingBuffer simultaneously, zero collisions), the dependency-gated integration task unblocked only after both were host-graded PASS, and one worker picked it up and landed it. 3/3, end to end, no coordinator logic outside the queue directory.
+
 ## Writing your own task
 
 ```json
@@ -158,6 +175,7 @@ agentwb/          the library: providers/ aci/ runtime/ evals/ protocols/
 tasks/            example tasks (bugfix, research, development)
 tests/            329+ tests, no network needed
 drive_session.py  you-as-the-model harness      drive_room.py  multi-agent room host
+drive_swarm.py    swarm host: shared queue, dynamic workers, host-graded verdicts
 demo/             viz.py + flow.py visualizers and rendered example boards
 docs/SPEC.md      the specification implemented   docs/DESIGN.md  full design rationale
 ```

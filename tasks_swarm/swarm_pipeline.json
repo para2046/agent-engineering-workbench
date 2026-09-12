@@ -1,0 +1,21 @@
+{
+  "id": "swarm_pipeline",
+  "tags": [
+    "swarm-demo"
+  ],
+  "prompt": "Implement pipeline.py: bounded_min_pipeline(values, capacity) pushes values through a RingBuffer(capacity), then drains it into a MinStack and returns min(); ValueError on empty input. COPY the graded stack.py and ring.py from the sibling swarm workspaces (../swarm_minstack/ and ../swarm_ringbuffer/) into this workspace and import them -- they are prerequisites that already passed grading. test_pipeline.py is the spec. Do not modify the tests.",
+  "success_criteria": "The full test suite in the workspace passes.",
+  "environment": {
+    "files": {
+      "pipeline.py": "# implement bounded_min_pipeline here\n",
+      "test_pipeline.py": "import unittest\nfrom pipeline import bounded_min_pipeline\n\nclass TestPipeline(unittest.TestCase):\n    def test_pipeline_combines_both_structures(self):\n        # feed values through a RingBuffer(3) into a MinStack; report the min\n        self.assertEqual(bounded_min_pipeline([9, 4, 7, 2, 5], capacity=3), 2)\n\n    def test_capacity_evicts_early_values(self):\n        # capacity 2 keeps only the last two: min(8, 6) == 6, the early 1 is evicted\n        self.assertEqual(bounded_min_pipeline([1, 8, 6], capacity=2), 6)\n\n    def test_empty_input(self):\n        with self.assertRaises(ValueError):\n            bounded_min_pipeline([], capacity=2)\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true
+    }
+  ]
+}

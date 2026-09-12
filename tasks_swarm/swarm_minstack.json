@@ -1,0 +1,21 @@
+{
+  "id": "swarm_minstack",
+  "tags": [
+    "swarm-demo"
+  ],
+  "prompt": "Implement stack.py: a MinStack (push/pop/min, IndexError when empty; min is the current minimum). test_stack.py is the spec. Do not modify the tests.",
+  "success_criteria": "The full test suite in the workspace passes.",
+  "environment": {
+    "files": {
+      "stack.py": "# implement MinStack here\n",
+      "test_stack.py": "import unittest\nfrom stack import MinStack\n\nclass TestMinStack(unittest.TestCase):\n    def test_push_pop(self):\n        s = MinStack()\n        s.push(3); s.push(1)\n        self.assertEqual(s.pop(), 1)\n        self.assertEqual(s.pop(), 3)\n\n    def test_min_tracks_in_constant_state(self):\n        s = MinStack()\n        for v in (5, 2, 8, 1):\n            s.push(v)\n        self.assertEqual(s.min(), 1)\n        s.pop()\n        self.assertEqual(s.min(), 2)\n\n    def test_empty_errors(self):\n        s = MinStack()\n        with self.assertRaises(IndexError):\n            s.pop()\n        with self.assertRaises(IndexError):\n            s.min()\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true
+    }
+  ]
+}

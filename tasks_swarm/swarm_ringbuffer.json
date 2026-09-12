@@ -1,0 +1,21 @@
+{
+  "id": "swarm_ringbuffer",
+  "tags": [
+    "swarm-demo"
+  ],
+  "prompt": "Implement ring.py: a fixed-capacity FIFO RingBuffer that overwrites the oldest item when full (put/get/__len__, IndexError on empty get). test_ring.py is the spec. Do not modify the tests.",
+  "success_criteria": "The full test suite in the workspace passes.",
+  "environment": {
+    "files": {
+      "ring.py": "# implement RingBuffer here\n",
+      "test_ring.py": "import unittest\nfrom ring import RingBuffer\n\nclass TestRingBuffer(unittest.TestCase):\n    def test_fifo(self):\n        r = RingBuffer(3)\n        r.put(\"a\"); r.put(\"b\")\n        self.assertEqual(r.get(), \"a\")\n        self.assertEqual(r.get(), \"b\")\n\n    def test_overwrites_oldest_when_full(self):\n        r = RingBuffer(2)\n        r.put(1); r.put(2); r.put(3)\n        self.assertEqual(r.get(), 2)\n        self.assertEqual(r.get(), 3)\n\n    def test_len_and_empty(self):\n        r = RingBuffer(2)\n        self.assertEqual(len(r), 0)\n        with self.assertRaises(IndexError):\n            r.get()\n        r.put(9)\n        self.assertEqual(len(r), 1)\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "graders": [
+    {
+      "type": "tests_pass",
+      "name": "suite_green",
+      "required": true
+    }
+  ]
+}
