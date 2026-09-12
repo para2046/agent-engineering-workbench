@@ -1,0 +1,14 @@
+{
+  "id": "debate_board_store",
+  "tags": [
+    "task-room-demo",
+    "discussion"
+  ],
+  "prompt": "Short design question, two rounds only: should a multi-agent task room persist its public message board as append-only JSONL or as a SQLite table? Consider auditability, crash behaviour mid-write, concurrent readers, and what a human debugging an episode actually does. End with one concrete recommendation.",
+  "success_criteria": "A single recommendation, argued from the stated concerns rather than taste.",
+  "environment": {
+    "files": {}
+  },
+  "max_steps": 4,
+  "graders": []
+}

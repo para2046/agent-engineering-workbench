@@ -118,6 +118,51 @@ Two properties survive at swarm scale:
 
 Demonstrated live: two independent Claude Code subagent workers claimed tasks in parallel from one queue (MinStack and RingBuffer simultaneously, zero collisions), the dependency-gated integration task unblocked only after both were host-graded PASS, and one worker picked it up and landed it. 3/3, end to end, no coordinator logic outside the queue directory.
 
+### The task room: N agents, ONE task, one shared workspace
+
+The room gives agents seats in a conversation; the swarm gives them separate tickets. The task room is the missing combination — several agents solving the *same* task in the *same* workspace:
+
+```bash
+python drive_task_room.py rooms/build tasks_room/joint_stats.json \
+    --seats 3 --max-rounds 6          # seats agent1..agent3, or --seats alice,bob
+```
+
+Each turn a seat sees the task, the **public board** (`<room>/board.jsonl`, append-only — no seat can rewrite what the others acted on), and its **own private history** (never another seat's), and answers with exactly one JSON action: `work` (edit the shared workspace directly, or hand the host a `"files"` map if you're an API model with no disk), `post` (publish one typed message to the board), or `done`. Turns round-robin under a hard round budget; the episode ends when every seat is done.
+
+Then the host — alone — grades the workspace with the task's own graders and writes `episode.json` (board, per-seat turn counts, termination reason, verdict). Three seats unanimously posting "all tests pass" moves nothing: the honesty boundary of the swarm, held even when the agents share one workspace and can talk each other into anything.
+
+Seats are filled the same two ways as everywhere else: by default each seat is a file mailbox any external process can occupy (same contract as the discussion room), and `--seat-provider agent1=claude-cli:sonnet` puts an in-process model in a seat instead — mix both in one episode.
+
+Demonstrated offline (`demo/episode_task_room.json`): three scripted external occupants split `stats.py` between them — claimed their functions on the board, one editing the workspace directly and the others via host-applied edits, private notes never crossing seats — and the host's graders passed the joint result 2/2, `all_done` in 3 rounds.
+
+## Mixing vendors in one conversation
+
+Every seat — in `multi-agent`, the discussion room, and the task room — takes its own provider, so one conversation can span vendors:
+
+```bash
+# GPT researcher vs Claude engineer (documented form; needs an OPENAI_API_KEY)
+agentwb multi-agent tasks/diagnose_latency_regression.json \
+    --researcher-provider openai     --researcher-model gpt-4o \
+    --engineer-provider   claude-cli --engineer-model sonnet
+
+# two genuinely different Claude models arguing through the Claude Code CLI
+agentwb multi-agent tasks_room/debate_board_store.json --max-rounds 2 \
+    --researcher-provider claude-cli --researcher-model sonnet \
+    --engineer-provider   claude-cli --engineer-model haiku
+
+# task room: one seat an in-process open-weight model via Ollama/vLLM,
+# one a Claude CLI model, one left as a mailbox for ANY external agent
+export OPENAI_BASE_URL=http://localhost:11434/v1  OPENAI_API_KEY=unused
+python drive_task_room.py rooms/mixed tasks_room/joint_stats.json --seats 3 \
+    --seat-provider agent1=openai:llama3.1 \
+    --seat-provider agent2=claude-cli:haiku
+    # agent3 stays a file mailbox: attach a subagent, another CLI, or a human
+```
+
+The reason this is configuration rather than architecture: seats speak to the host through one JSON contract (`JudgeClient`-shaped `ask_json`), and a mailbox seat satisfies the same contract through the filesystem — so any OpenAI-compatible endpoint (`OPENAI_BASE_URL` covers Ollama, vLLM, LM Studio, or a proxy to any hosted vendor), the Anthropic API, the Claude Code CLI, and processes with no API at all are interchangeable per seat.
+
+Honestly demonstrated vs. merely documented: the sonnet-vs-haiku cross-model exchange above ran live (`demo/exchange_sonnet_haiku.json` — in it, the two models read the task-room source and flagged a real unhandled torn-tail read in `board()`, since fixed and regression-tested), `--seat-provider` has run live with `claude-cli:haiku` occupying a task-room seat in-process, and mailbox seats have run live with Claude Code subagents and scripted occupants. The `openai`-provider combinations (GPT-4o, or open-weight via `OPENAI_BASE_URL`) are documented-but-untested in a mixed conversation — no OpenAI key or local model server exists on this machine, so nothing here vouches for them beyond the adapter compiling and registering.
+
 ## Writing your own task
 
 ```json
@@ -179,6 +224,7 @@ tasks/            example tasks (bugfix, research, development)
 tests/            329+ tests, no network needed
 drive_session.py  you-as-the-model harness      drive_room.py  multi-agent room host
 drive_swarm.py    swarm host: shared queue, dynamic workers, host-graded verdicts
+drive_task_room.py  task-room host: N seats, one shared workspace, one verdict
 demo/             viz.py + flow.py visualizers and rendered example boards
 docs/SPEC.md      the specification implemented   docs/DESIGN.md  full design rationale
 ```

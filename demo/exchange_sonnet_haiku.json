@@ -1,0 +1,187 @@
+{
+  "task_id": "debate_board_store",
+  "rounds": 2,
+  "termination_reason": "SUCCESS",
+  "metrics": {
+    "rounds": 2,
+    "handoffs": 4,
+    "disagreements": 0,
+    "unresolved_disagreements": 0,
+    "protocol_violations": 0,
+    "duplicate_work": 0,
+    "evidence_items": 16,
+    "blockers": 0,
+    "ignored_evidence": 0,
+    "verification_failures": 0
+  },
+  "messages": [
+    {
+      "message_id": "msg_a62718d5cf",
+      "sender": "researcher",
+      "recipient": "engineer",
+      "task_id": "debate_board_store",
+      "type": "EVIDENCE",
+      "claim": "The task room already persists its board as append-only JSONL, and all writes are serialized through one host process, not contended by concurrent writers.",
+      "evidence": [
+        {
+          "source": "agentwb/protocols/task_room.py:134-146 (TaskRoom.post)",
+          "observation": "post() is the only place board.jsonl is written; it opens in append mode, writes one JSON line, and closes. Seats never touch the file directly -- even external/mailbox occupants reply via reply.json and the host calls post() on their behalf."
+        },
+        {
+          "source": "agentwb/protocols/task_room.py:263-267 (TaskRoom.run)",
+          "observation": "Seats are turned round-robin in a plain for-loop, no threading/async -- so board writes are strictly sequential by construction, independent of storage format."
+        },
+        {
+          "source": "tests/test_task_room.py:61-71 (test_posts_append_and_never_rewrite)",
+          "observation": "Test asserts a later board_path read starts with the earlier read's bytes -- i.e. append-only-in-practice is verified for the current process, not against a crash or a second process."
+        },
+        {
+          "source": "rooms/task_demo/board.jsonl",
+          "observation": "Real episode output: 3 lines, one JSON object per line, human-readable without tooling."
+        }
+      ],
+      "confidence": 0.85,
+      "unknowns": [
+        "Whether a process crash mid-write (kill -9 during the open/write/flush in post()) leaves a partial trailing line, and whether anything downstream (board(), a human, a dashboard) chokes on it rather than just losing the last entry",
+        "Whether any consumer reads board.jsonl concurrently with the host writing it (e.g. a live dashboard or a human `tail -f`), since that is the only real concurrency this design has -- one writer, N readers -- not N writers",
+        "What a human actually does when debugging a stuck or misbehaving episode: grep/tail board.jsonl, or would they want to query e.g. 'all BLOCKER messages from agent2' -- not observed, only assumed",
+        "SQLite's actual failure mode under the same kill -9-mid-write test on this filesystem/OS (Windows), with and without WAL mode"
+      ],
+      "recommended_action": "Before recommending a storage format, run the crash-mid-write experiment below; the concurrent-writer case that usually motivates SQLite does not apply here since the host already serializes all posts -- the real open questions are crash recovery and read/debug ergonomics, not write contention.",
+      "verification": {
+        "metric": "For both JSONL-append and SQLite-insert, run 50 trials of: start a writer loop appending one board entry every 20ms, SIGKILL it at a random point, then measure (a) can the storage be opened/read at all, (b) how many complete entries are recoverable, (c) is the corruption confined to the last entry or does it affect earlier ones",
+        "expected_if_correct": "JSONL: file always opens; corruption (if any) is confined to a truncated final line, trivially detected (invalid JSON on the last line) and discarded; zero prior lines lost. SQLite without WAL: some fraction of trials produce a database that fails to open or requires recovery before any row is readable",
+        "expected_if_wrong": "JSONL trials also show corruption reaching earlier, already-flushed lines, or SQLite (especially in WAL mode) recovers cleanly every time with no worse data loss than JSONL -- in which case crash behavior does not differentiate the two and the decision should rest on the debugging-ergonomics question instead"
+      },
+      "in_reply_to": null,
+      "round": 1,
+      "at": "2026-09-12T09:29:53Z"
+    },
+    {
+      "message_id": "msg_769da6b63d",
+      "sender": "engineer",
+      "recipient": "researcher",
+      "task_id": "debate_board_store",
+      "type": "EVIDENCE",
+      "claim": "JSONL is correct; SQLite adds complexity that this codebase's single-writer, multi-reader access pattern doesn't justify, and concurrent readers will choke on partial writes either way.",
+      "evidence": [
+        {
+          "source": "agentwb/protocols/task_room.py:134–146 (post method)",
+          "observation": "post() serializes all writes: open('rb+' or 'a'), write(json.dumps(msg) + '\\n'), no explicit flush(). Python's file handle has buffering; crash mid-write leaves a partial line in the buffer, not on disk. This is bad for JSONL but identical to a partial SQLite transaction abort — both require a recovery pass."
+        },
+        {
+          "source": "grep for board() consumers across codebase",
+          "observation": "Need to inspect: (1) how board.jsonl is read in practice; (2) whether any live tail/stream exists; (3) what format the API exports (e.g., does room expose a board endpoint? what do dashboards call?)."
+        },
+        {
+          "source": "Test scenario: concurrent reader during write",
+          "observation": "If a human or dashboard calls board() mid-post(), they read whatever has been flushed to disk. JSONL: they get all complete lines, incomplete tail ignored by json decoder (safe but loses a message). SQLite: concurrent read during write blocks until commit (safe but slower) or reads dirty data (unsafe — same as JSONL incomplete-line risk)."
+        },
+        {
+          "source": "Auditability concern",
+          "observation": "JSONL with one newline per message is immutably append-only once flushed — no UPDATE/DELETE possible, audit trail is transparent to `tail`, `grep`. SQLite requires schema to expose audit tables or triggers; both add implementation work and obscure the trace unless explicitly queried."
+        },
+        {
+          "source": "Human debugging: observation of actual workflow",
+          "observation": "Not yet inspected. Must check: what does a human actually run to debug a stuck episode? If it's `tail -f board.jsonl` or `grep BLOCKER board.jsonl`, JSONL wins (human-readable, no tools). If it's structured queries like 'all BLOCKER from agent-2', SQLite wins (schema + indexes). Current code gives no evidence of the latter."
+        }
+      ],
+      "confidence": 0.65,
+      "unknowns": [
+        "What downstream consumers read board.jsonl (dashboards, human debugging scripts, live streams)? Are any of them concurrent?",
+        "Does the codebase have a query API (e.g., 'fetch messages from agent X after timestamp Y') or is inspection always `grep`/`tail`?",
+        "What happens when post() is interrupted: does the test or any consumer gracefully skip the partial line, or does it error?"
+      ],
+      "recommended_action": "Inspect three concrete points to remove unknowns: (1) grep for all board() calls and board.jsonl reads in tests + any live-dashboard code; (2) run a crash-simulation test (kill -9 during post()) and verify board() recovers; (3) run the existing test suite under concurrent `tail` to verify no interleaving corruption. Then decide.",
+      "verification": {
+        "metric": "Consumer robustness under concurrent read + crash",
+        "expected_if_correct": "board() skips incomplete final line on recovery; concurrent tail -f sees complete messages only; no schema complexity added.",
+        "expected_if_wrong": "Consumer crashes on incomplete line; concurrent reader sees torn writes; SQLite overhead is justified only if structured queries are already in use or planned."
+      },
+      "in_reply_to": null,
+      "round": 1,
+      "at": "2026-09-12T09:30:12Z"
+    },
+    {
+      "message_id": "msg_1e85767256",
+      "sender": "researcher",
+      "recipient": "engineer",
+      "task_id": "debate_board_store",
+      "type": "CRITIQUE",
+      "claim": "The engineer's claim that a crash mid-write leaves JSONL readers safe ('incomplete tail ignored by json decoder, safe but loses a message') is contradicted by the actual code: board() has no exception handling around json.loads, so a partial trailing line does not get silently skipped, it raises uncaught.",
+      "evidence": [
+        {
+          "source": "agentwb/protocols/task_room.py:148-155 (TaskRoom.board)",
+          "observation": "board() calls json.loads(line) for every non-blank line with no try/except; there is no JSONDecodeError handling anywhere in the file (grepped 'try:|except|JSONDecodeError' — the only try/except blocks, lines 209-239, wrap JudgeError/ValueError from turn-processing, not board reads)."
+        },
+        {
+          "source": "agentwb/protocols/task_room.py:173-183 (seat_prompt)",
+          "observation": "board() is called on every turn to build the next seat's prompt (public_board key), so a JSONDecodeError from a malformed last line would propagate out of seat_prompt() and crash run() on the very next turn, not just cause the reader to lose one message."
+        },
+        {
+          "source": "tests/test_task_room.py:60-71 (test_posts_append_and_never_rewrite)",
+          "observation": "The only board-persistence test checks two full, well-formed writes back-to-back; there is no test with a truncated/partial trailing line, so this failure mode is untested."
+        }
+      ],
+      "confidence": 0.75,
+      "unknowns": [
+        "Whether a real OS-level crash (kill -9) during the open/write in post() actually leaves a partial line with content on disk, or whether Python/OS buffering means the write either fully lands or nothing lands at all — this determines whether the JSONDecodeError scenario above is reachable in practice, and it has not been tested, only reasoned about from the source.",
+        "Whether SQLite's crash-recovery story (WAL/rollback journal guaranteeing each commit is atomic) would actually prevent this failure mode here, since that depends on how the write would be wrapped in a transaction, which is an implementation choice not yet made or observed."
+      ],
+      "recommended_action": "Before the recommendation is finalized, run the crash-simulation experiment below rather than reasoning from the source alone, since the failure mode changes the risk calculus: if a partial line can crash board() on the next turn, that is a fragility unique to the JSONL-with-unguarded-json.loads design, not an inherent property of 'append-only JSONL' as a format (a try/except-and-truncate-last-line reader would close this gap without moving to SQLite).",
+      "verification": {
+        "metric": "Whether TaskRoom.board() raises JSONDecodeError or returns a clean (possibly shorter) list after a simulated mid-write crash",
+        "expected_if_correct": "Write a well-formed line, then append a truncated fragment of a JSON line (no trailing newline, syntactically invalid) directly to board_path to simulate a kill -9 mid-write, then call board() — if it raises JSONDecodeError, the engineer's 'safe, just loses a message' claim is false for the current implementation",
+        "expected_if_wrong": "If board() instead returns the well-formed lines and silently drops the malformed tail (e.g. if reader logic that isn't visible in the current file handles this), the engineer's original claim holds and this critique should be withdrawn"
+      },
+      "in_reply_to": null,
+      "round": 2,
+      "at": "2026-09-12T09:31:23Z"
+    },
+    {
+      "message_id": "msg_f7f952a15b",
+      "sender": "engineer",
+      "recipient": "researcher",
+      "task_id": "debate_board_store",
+      "type": "FINAL_REPORT",
+      "claim": "Recommend JSONL. The researcher's critique correctly identifies a real crash vulnerability (board() lacks JSONDecodeError handling), but this requires reader robustness regardless of storage format. Switching to SQLite trades simplicity for a problem that is already fixable at the reader level.",
+      "evidence": [
+        {
+          "source": "agentwb/protocols/task_room.py (TaskRoom.board, lines 148-155)",
+          "observation": "Verified the researcher's critique: board() iterates json.loads(line) with no exception handler. A malformed trailing line from a crash mid-write would raise JSONDecodeError and propagate to seat_prompt(), crashing run() on the next turn. This is a real vulnerability."
+        },
+        {
+          "source": "agentwb/protocols/task_room.py (TaskRoom.run, lines 263-267) + researcher round 1",
+          "observation": "All board writes are serialized through post(); round-robin seat iteration guarantees single writer, no concurrent writes. The access pattern is single-writer, multi-reader. SQLite's atomicity gain (preventing concurrent half-commits) does not apply here."
+        },
+        {
+          "source": "Stated concern: human debugging an episode",
+          "observation": "JSONL is debuggable with `grep`, `tail`, `less` without tools. SQLite requires sqlite3 CLI or a query utility. The human-debugging use case favors JSONL."
+        },
+        {
+          "source": "Stated concern: auditability",
+          "observation": "Both formats support audit trails. JSONL is naturally append-only. SQLite's WAL provides recovery guarantees, but audit queries (what did agent X post?) require code-level filtering either way."
+        }
+      ],
+      "confidence": 0.9,
+      "unknowns": [
+        "Process crash frequency in deployed task rooms (determines how often a partial line actually occurs)",
+        "Whether board() already has error handling upstream that catches JSONDecodeError before it reaches run() (code scan was local; full call stack not fully traced)"
+      ],
+      "recommended_action": "Use JSONL. The real fix is defensive: add try/except around json.loads in board() to skip and log malformed lines. This solves the crash vulnerability without format migration. Both formats require reader robustness; JSONL is simpler for this access pattern.",
+      "verification": {
+        "metric": "Task room survives a malformed board.jsonl (e.g., truncated final line) without crashing on the next turn",
+        "expected_if_correct": "board() skips the malformed line, returns only valid messages, run() continues",
+        "expected_if_wrong": "JSONDecodeError propagates and crashes run()"
+      },
+      "in_reply_to": null,
+      "round": 2,
+      "at": "2026-09-12T09:32:38Z"
+    }
+  ],
+  "disagreements": [],
+  "violations": [],
+  "failure_categories": [],
+  "started_at": "2026-09-12T09:28:47Z",
+  "ended_at": "2026-09-12T09:32:38Z"
+}

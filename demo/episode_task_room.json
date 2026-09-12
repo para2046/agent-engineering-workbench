@@ -1,0 +1,86 @@
+{
+  "task_id": "joint_stats",
+  "workspace": "G:\\My Drive\\.community_learning\\sprint1\\agent_workbench\\rooms\\task_demo\\workspace",
+  "max_rounds": 5,
+  "rounds_used": 3,
+  "termination_reason": "all_done",
+  "board_messages": 3,
+  "board": [
+    {
+      "seq": 1,
+      "sender": "agent1",
+      "at": "2026-09-12T09:28:13Z",
+      "message": {
+        "type": "PLAN",
+        "text": "split: agent1 mean, agent2 median, agent3 mode"
+      }
+    },
+    {
+      "seq": 2,
+      "sender": "agent2",
+      "at": "2026-09-12T09:28:14Z",
+      "message": {
+        "type": "STATUS",
+        "text": "taking median()"
+      }
+    },
+    {
+      "seq": 3,
+      "sender": "agent3",
+      "at": "2026-09-12T09:28:15Z",
+      "message": {
+        "type": "STATUS",
+        "text": "taking mode()"
+      }
+    }
+  ],
+  "seats": {
+    "agent1": {
+      "turns": 3,
+      "works": 1,
+      "posts": 1,
+      "violations": 0,
+      "done": true,
+      "done_reason": "reported done",
+      "report": "mean() done; guard available to all"
+    },
+    "agent2": {
+      "turns": 3,
+      "works": 1,
+      "posts": 1,
+      "violations": 0,
+      "done": true,
+      "done_reason": "reported done",
+      "report": "median() appended and eyeballed against spec"
+    },
+    "agent3": {
+      "turns": 3,
+      "works": 1,
+      "posts": 1,
+      "violations": 0,
+      "done": true,
+      "done_reason": "reported done",
+      "report": "mode() in; full suite should be green"
+    }
+  },
+  "at": "2026-09-12T09:28:21Z",
+  "verdict": {
+    "passed": true,
+    "score": 1.0,
+    "graders": [
+      {
+        "grader": "suite_green",
+        "verdict": "PASS"
+      },
+      {
+        "grader": "spec_untouched",
+        "verdict": "PASS"
+      }
+    ],
+    "seats_claiming_done": [
+      "agent1",
+      "agent2",
+      "agent3"
+    ]
+  }
+}
