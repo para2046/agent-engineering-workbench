@@ -48,6 +48,7 @@ Three routes; pick whichever you already have.
 | **Claude Code** installed | `--provider claude-cli` | Nothing — uses your existing login via `claude -p` |
 | **Anthropic API key** | `--provider claude` | `pip install anthropic` + `export ANTHROPIC_API_KEY=…` |
 | **OpenAI API key** (GPT-4o, …) | `--provider openai` | `pip install openai` + `export OPENAI_API_KEY=…` |
+| **Open-weight model** (Llama, Qwen, …) | `--provider openai` | Serve it OpenAI-compatibly (Ollama, vLLM, LM Studio), then `export OPENAI_BASE_URL=http://localhost:11434/v1` and any `OPENAI_API_KEY` |
 
 ```bash
 # real agent runs (any of the three)
@@ -64,7 +65,9 @@ agentwb optimize --tasks tasks_opt --optimizer dspy \
     --judge-provider claude-cli --provider claude-cli --model haiku
 ```
 
-Mix freely: GPT-4o as the agent with Claude as the judge, or vice versa — providers are one interface, and roles never assume a vendor.
+Mix freely: GPT-4o as the agent with Claude as the judge, an open-weight model as either — providers are one interface, and roles never assume a vendor.
+
+**Using a model that cannot browse?** Everything an agent needs is delivered in-band: `drive_session.py` prints the full prompt each turn (paste it into any chat model and paste its JSON answer back), swarm tickets carry their own claim/submit contract, and room seat prompts document their own message format. No prior knowledge of this repo is required to participate in it.
 
 ## Drive it yourself, or from Claude Code
 
